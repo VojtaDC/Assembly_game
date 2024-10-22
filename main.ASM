@@ -226,10 +226,11 @@ PROC moveCell
         ret
 ENDP moveCell
 
-; -------------------------------------------------------------------
+; --------------------------------------------------------------------------------------------------------------------------------------
 
 ; dynamic grid functions
 
+; --------------------------------------------------------------------------------------------------------------------------------------
 ; function to change content of a cell in the dynamic grid
 PROC updateDynamicCell
     ARG @@x:BYTE, @@y:BYTE, @@value:BYTE
@@ -257,30 +258,41 @@ PROC addDynamicEntitytoArray
     ARG @@type:BYTE ; lets start with just adding a type
     USES eax, ebx, ecx, edx, edi
 
-        ; Load the value of free_index into eax
-        mov al, [free_index]
-        movzx eax, al  ; Zero-extend al to eax to ensure correct offset calculation
+            ; Load the value of free_index into eax
+            mov al, [free_index]
+            movzx eax, al  ; Zero-extend al to eax to ensure correct offset calculation
 
-        ; Calculate the address of the first free index in the dynamic_entities_array
-        mov edi, offset dynamic_entities_array
-        add edi, eax
+            ; Calculate the address of the first free index in the dynamic_entities_array
+            mov edi, offset dynamic_entities_array
+            add edi, eax
 
-        ; Store the entity type at the calculated position
-        mov al, [@@type]
-        stosb
+        occupied_check:
+            ; check if that position is already occupied
+            mov ebx, [edi]
+            cmp ebx, -1
+            jne full_space
+            jmp free_space
 
-        ; push the free_index used
-        mov al, [free_index]
-        push eax
+        full_space:
+            add edi, 1 ; move to the next position in the dynamic_entities_array
+            jmp occupied_check
+        free_space:
+            ; Store the entity type at the calculated position
+            mov al, [@@type]
+            stosb
 
-        call printDecimal, eax
+            ; push the free_index used
+            mov al, [free_index]
+            push eax
 
-        ; Increment the free_index
-        mov al, [free_index]
-        inc al
-        mov [free_index], al
-        
-    ret
+            call printDecimal, eax
+
+            ; Increment the free_index
+            mov al, [free_index]
+            inc al
+            mov [free_index], al
+            
+            ret
 ENDP addDynamicEntitytoArray
 
 ; function to print state of an entity in the dynamic entities array
@@ -331,7 +343,46 @@ PROC initializeDynamicEntity
 
 ENDP initializeDynamicEntity
 
-; -------------------------------------------------------------------
+; function to remove an entity
+PROC removeDynamicEntity
+    ARG @@x:BYTE, @@y:BYTE
+    USES eax, ebx, ecx, edx, edi
+
+    ; get the index in the grid
+    ; clear the entity in the dynamic_entities_array
+    ; clear the entity in the dynamic_grid
+
+    movzx eax, [@@y]
+    imul eax, COLUMNS
+    add al, [@@x]
+    mov edi, offset dynamic_grid
+    add edi, eax
+
+    ; Get the entity index from the dynamic_grid
+    lodsb
+
+    ; Clear the entity in the dynamic_entities_array
+    mov edi, offset dynamic_entities_array
+    add edi, eax
+    mov al, -1
+    stosb
+
+    ; Clear the entity in the dynamic_grid
+    mov al, [@@x]
+    mov bl, [@@y]
+    call updateDynamicCell, eax, ebx, -1
+
+    ret
+
+
+ENDP removeDynamicEntity
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+
+; functions for graphics
+
+
+; --------------------------------------------------------------------------------------------------------------------------------------
 
 PROC main
     sti                 ; Enable interrupts
@@ -352,11 +403,12 @@ PROC main
     ;call addDynamicEntitytoArray, 1
     ;call printDynamicEntityState, 0
     call initializeDynamicEntity, 0, 0, 1
-    call initializeDynamicEntity, 0, 1, 1
-    call initializeDynamicEntity, 0, 2, 1
     call printGrid, 0, offset dynamic_grid
     call printDynamicEntityState, 0
-    call printDynamicEntityState, 1
+    call printDecimal, 0
+    call removeDynamicEntity, 0, 0
+    call printGrid, 0, offset dynamic_grid
+    call printDynamicEntityState, 0
 
     ; Main game loop
 gameLoop:
