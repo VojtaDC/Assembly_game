@@ -19,6 +19,7 @@ SCRWIDTH EQU 320	; screen witdth
 SCRHEIGHT EQU 200	; screen height
 ROWS EQU 5		; number of rows
 COLUMNS EQU 9		; number of columns
+BMP_HEADER_SIZE equ 54
 
 ; -------------------------------------------------------------------
 CODESEG
@@ -39,7 +40,7 @@ ENDP setVideoMode
 ; Otherwise, return.
 PROC checkForSpecificKeystroke
     ARG     @@key:byte
-    USES    eax
+    USES    eax, ebx, ecx, edx, esi, edi
 
     ; Check if a key is pressed
     mov     ah, 01h
@@ -81,6 +82,7 @@ PROC terminateProcess
 	call setVideoMode, 03h
 	mov	ax,04C00h
 	int 21h
+
 	ret
 ENDP terminateProcess
 
@@ -171,7 +173,7 @@ ENDP printGrid
 ; change content of a cell in the grid
 PROC updateCell
     ARG @@x:BYTE, @@y:BYTE, @@value:BYTE
-    USES eax, ebx, edi
+    USES eax, ebx, edi, esi
 
     ; Calculate the offset of the cell in the grid
     mov edi, offset grid
@@ -229,7 +231,7 @@ ENDP moveCell
 ; function to change content of a cell in the dynamic grid
 PROC updateDynamicCell
     ARG @@x:BYTE, @@y:BYTE, @@value:BYTE
-    USES eax, ebx, ecx, edx, edi
+    USES eax, ebx, ecx, edx, edi, esi
 
     ; Calculate the offset of the cell in the grid
     mov edi, offset dynamic_grid
@@ -397,7 +399,129 @@ ENDP removeDynamicEntity
 ; Draw State:
 ; - draw level 0 (background) - draw the grid
 ; - draw level 1 (static entities) - draw the plants
+; - draw level 2 (dynamic entities) - draw the zombies and projectiles
 
+; function to draw the plants
+PROC drawPlantGrid
+    USES eax, ebx, ecx, edx, edi, esi
+
+    ; Iterate over the grid, for each cell, check if there is a plant
+    ; If there is a plant, draw the plant, read the type of the plant from the grid
+
+    mov esi, offset grid
+    mov ecx, ROWS
+    mov edx, COLUMNS
+
+    outer_loop_draw_plants:
+        push ecx
+        mov ecx, edx
+
+    inner_loop_draw_plants:
+        lodsb
+        mov bl, 7
+        add esi, ebx
+        cmp al, -1
+        jne draw_plants
+        jmp after_draw_plant
+
+    draw_plants:
+        ; x = (columns - ecx) * 30 + 50
+        ; y = (rows - TOS) * 40
+        mov ebx, ROWS
+        mov eax, ecx ; save ecx
+        pop ecx ; get the row
+        sub ebx, ecx
+        imul ebx, 40
+        push ecx ; put the row back
+        mov ecx, eax ; restore ecx
+        mov eax, COLUMNS
+        sub eax, ecx
+        imul eax, 30
+        add eax, 50
+        
+        call drawPlant, eax, ebx, 0
+    after_draw_plant:
+        loop inner_loop_draw_plants
+        
+        pop ecx
+        loop outer_loop_draw_plants
+
+        ret
+
+
+ENDP drawPlantGrid
+
+; function to draw a plant -- temporary, later on we will use sprites
+PROC drawPlant
+    ARG 	@@x0:word, @@y0:word, @@col: byte
+    USES 	eax, ebx, ecx, edx, edi
+
+        ; draw 2 rectangles for the plant
+        ; one for the stem and one for the head
+
+        ; draw the stem
+        mov ax, [@@x0]
+        add eax, 13
+        mov bx, [@@y0]
+        add ebx, 20
+        call drawColoredRectangle, eax, ebx, 4, 19, 42 ; draw the stem
+
+        ; draw the head
+        mov ax, [@@x0]
+        add eax, 10
+        mov bx, [@@y0]
+        add ebx, 10
+        call drawColoredRectangle, eax, ebx, 10, 10, 45 ; draw the head
+
+        ret
+
+ENDP drawPlant
+
+; draw zombie
+PROC drawZombie
+    ARG 	@@x0:word, @@y0:word, @@w:word, @@h:word, @@col: byte
+    USES eax, ebx, ecx, edx, edi
+
+    ; draw the head
+    mov ax, [@@x0]
+    add eax, 10
+    mov bx, [@@y0]
+    add ebx, 10
+    call drawColoredRectangle, eax, ebx, 10, 10, 6
+
+    ; draw the body
+    mov ax, [@@x0]
+    add eax, 12
+    mov bx, [@@y0]
+    add ebx, 20
+    call drawColoredRectangle, eax, ebx, 6, 12, 4
+
+    ; draw the legs
+    mov ax, [@@x0]
+    add eax, 13
+    mov bx, [@@y0]
+    add ebx, 32
+    call drawColoredRectangle, eax, ebx, 4, 7, 55
+
+    ret
+
+ENDP drawZombie
+
+; draw projectile
+PROC drawProjectile
+    ARG 	@@x0:word, @@y0:word, @@w:word, @@h:word, @@col: byte
+    USES eax, ebx, ecx, edx, edi
+
+    ; draw a rectangle for the projectile
+    mov ax, [@@x0]
+    add eax, 10
+    mov bx, [@@y0]
+    add ebx, 20
+    call drawColoredRectangle, eax, ebx, 10, 5, 21
+
+    ret
+
+ENDP drawProjectile
 
 ; function to draw the grid
 ; call for every cell draw rectangle
@@ -409,19 +533,19 @@ PROC drawBackground
     mov ecx, ROWS ; number of rows
     mov edx, COLUMNS ; number of columns
 
-    outer_loop_draw1:
+    outer_loop_draw_background:
         push ecx ; save outer loop counter
         mov ecx, edx ; set inner loop counter
 
-    inner_loop_draw1:
+    inner_loop_draw_background:
         call drawRectangle, eax, ebx, 30, 40, 2 ; draw a rectangle at the current position
         add eax, 30 ; move to the next column
-        loop inner_loop_draw1 ; repeat for each column
+        loop inner_loop_draw_background ; repeat for each column
 
         mov eax, 50
         add ebx, 40 ; move to the next row
         pop ecx ; restore outer loop counter
-        loop outer_loop_draw1 ; repeat for each row
+        loop outer_loop_draw_background ; repeat for each row<
 
         ret
 ENDP drawBackground
@@ -433,7 +557,7 @@ ENDP drawBackground
 ;	  positive width 'w' and height 'h', with color "col"
 PROC drawRectangle
 	ARG 	@@x0:word, @@y0:word, @@w:word, @@h:word, @@col: byte
-	USES 	eax, ecx, edx, edi ; note: MUL uses edx!
+	USES 	eax, ecx, edx, edi 
 
 	; Compute the index of the rectangle's top left corner
 	movzx eax, [@@y0]
@@ -537,10 +661,13 @@ PROC main
     ;Set video mode to 13h
     ;call setVideoMode, 13h
 
-    ;call updateCell, 0, 0, 5
-    ;call printGrid, 7
-    ;call moveCell, 0, 0, 10, 0
-    ;call printGrid, 7
+    ;call updateCell, 0, 0, 0
+    ;call updateCell, 0, 1, 0
+    ;call updateCell, 1, 1, 0
+    ;call updateCell, 2, 1, 0
+    ;call printGrid, 7, offset grid
+
+
 
     ; test dynamic grid
     ;call addDynamicEntitytoArray, 1
@@ -555,18 +682,28 @@ PROC main
 
     ; test graphics
     call setVideoMode, 13h
+    call updateCell, 0, 0, 0
+    call updateCell, 0, 1, 0
+    call updateCell, 0, 2, 0
+    call updateCell, 0, 3, 0
+    call updateCell, 0, 4, 0
+
+
     call fillBackgroundFaster, 93 ; fill the screen with white
 
     ; draw 50 * 200 rectangle, reserved space for UI
-    call drawColoredRectangle, 0, 0, 50, 200, 0
-
-    call drawBackground ; draw the grid
+    call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
 
     ; Main game loop
 gameLoop:
 
     ; Update game state and render frame
     ; ...
+    call drawBackground ; draw the grid
+    ;call drawPlant, 50, 0 ; draw a plant at position 10, 10
+    ;call drawZombie, 290, 0 ; draw a zombie at position 100, 100
+    ;call drawProjectile, 260, 0 ; draw a projectile at position 150, 150
+    call drawPlantGrid ; draw the plants
     
     ; if ESC pressed, exit the program
     call    checkForSpecificKeystroke, 001Bh
@@ -595,7 +732,8 @@ DATASEG
     free_index db 0 ; index of the first free entity in the dynamic_entities_array
     mob_capacity db 100 ; maximum number of entities in the dynamic_entities_array
 
-
+    sprite db "test.bmp", 0
+    buffer db BMP_HEADER_SIZE + 320 * 200 dup (0)
 
 
     ; Template entity structure
