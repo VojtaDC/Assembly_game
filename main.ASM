@@ -18,7 +18,7 @@ VMEMADR EQU 0A0000h	; video memory address
 SCRWIDTH EQU 320	; screen witdth
 SCRHEIGHT EQU 200	; screen height
 ROWS EQU 5		; number of rows
-COLUMNS EQU 20		; number of columns
+COLUMNS EQU 9		; number of columns
 
 ; -------------------------------------------------------------------
 CODESEG
@@ -33,15 +33,6 @@ PROC setVideoMode
 
 	ret
 ENDP setVideoMode
-PROC fillBackground
-	ARG @@color:BYTE
-    USES edi, ecx
-        	mov edi, VMEMADR    ; Point EDI to video memory
-        	mov al, [@@color]     ; Load the color into AL
-        	mov ecx, SCRWIDTH * SCRHEIGHT ; Number of pixels
-        	REP stosb           ; Fill video memory with the color
-        	ret
-ENDP fillBackground
 
 ; Check if a specific keystroke is pressed.
 ; If the specified key is pressed, exit the program.
@@ -231,6 +222,10 @@ ENDP moveCell
 ; dynamic grid functions
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
+; TODO:
+; - add a check in the function to add an entity to the array, that checks whether the free index is free, if not, increment and search for a new spot
+; - add a mob capacity and mob count variable, the mob capacity is lesser or equal to the entities array size, the mob count has to be lesser or equal to the mob capacity, if not, do not allow spawning
+
 ; function to change content of a cell in the dynamic grid
 PROC updateDynamicCell
     ARG @@x:BYTE, @@y:BYTE, @@value:BYTE
@@ -381,6 +376,154 @@ ENDP removeDynamicEntity
 
 ; functions for graphics
 
+; --------------------------------------------------------------------------------------------------------------------------------------
+
+; state of the game = state of the grid + state of the entities
+; - print out the grid
+; - print out the plants
+; - print out the zombies and projectiles
+
+; First step: (naive)
+; - function that prints the whole state
+
+; Second step: (more optimal)
+; - function that updates the state, for example, moves the entities, checks for collisions, etc.
+; - this function needs to print only the entities that have changed, so only the cells that have changed
+; - make this function have a parameters that specify which cell to update, this way, 
+;   whenever a function that changes the game state is called, it can call this function with the changed cell
+
+
+
+; Draw State:
+; - draw level 0 (background) - draw the grid
+; - draw level 1 (static entities) - draw the plants
+
+
+; function to draw the grid
+; call for every cell draw rectangle
+PROC drawBackground
+    USES eax, ebx, ecx, edx, edi
+
+    mov eax, 50 ; x offset
+    mov ebx, 0 ; y offset
+    mov ecx, ROWS ; number of rows
+    mov edx, COLUMNS ; number of columns
+
+    outer_loop_draw1:
+        push ecx ; save outer loop counter
+        mov ecx, edx ; set inner loop counter
+
+    inner_loop_draw1:
+        call drawRectangle, eax, ebx, 30, 40, 2 ; draw a rectangle at the current position
+        add eax, 30 ; move to the next column
+        loop inner_loop_draw1 ; repeat for each column
+
+        mov eax, 50
+        add ebx, 40 ; move to the next row
+        pop ecx ; restore outer loop counter
+        loop outer_loop_draw1 ; repeat for each row
+
+        ret
+ENDP drawBackground
+
+; ** generic functions for drawing **
+
+; Draw a rectangle (video mode 13h)
+; 	* draws the rectangle from position (x0,y0) with
+;	  positive width 'w' and height 'h', with color "col"
+PROC drawRectangle
+	ARG 	@@x0:word, @@y0:word, @@w:word, @@h:word, @@col: byte
+	USES 	eax, ecx, edx, edi ; note: MUL uses edx!
+
+	; Compute the index of the rectangle's top left corner
+	movzx eax, [@@y0]
+	mov edx, SCRWIDTH
+	mul edx
+	add	ax, [@@x0]
+
+	; Compute top left corner address
+	mov edi, VMEMADR
+	add edi, eax
+	
+	; Plot the top horizontal edge.
+	movzx edx, [@@w]	; store width in edx for later reuse
+	mov	ecx, edx
+	mov	al,[@@col]
+	rep stosb
+	sub edi, edx		; reset edi to left-top corner
+	
+	; plot both vertical edges
+	movzx ecx,[@@h]
+	@@vertLoop:
+		mov	[edi],al		; left edge
+		mov	[edi+edx-1],al	; right edge
+		add	edi, SCRWIDTH
+		loop @@vertLoop
+	; edi should point at the bottom-left corner now
+	sub edi, SCRWIDTH
+
+	; Plot the bottom horizontal edge.
+	mov	ecx, edx
+	rep stosb
+	ret
+ENDP drawRectangle
+
+; Draw a colored rectangle (video mode 13h)
+; 	* draws the rectangle from position (x0,y0) with
+;	  positive width 'w' and height 'h', with color "col"
+PROC drawColoredRectangle
+    ARG 	@@x0:word, @@y0:word, @@w:word, @@h:word, @@col: byte
+    USES 	eax, ecx, edx, edi ; note: MUL uses edx!
+
+    ; Compute the index of the rectangle's top left corner
+    movzx eax, [@@y0]
+    mov edx, SCRWIDTH
+    mul edx
+    add	ax, [@@x0]
+
+    ; Compute top left corner address
+    mov edi, VMEMADR
+    add edi, eax
+    
+    ; Fill the rectangle
+    movzx edx, [@@w]	; store width in edx for later reuse
+    mov	al,[@@col]
+    movzx ecx, [@@h]	; store height in ecx for loop
+    @@fillLoop:
+        push ecx			; save height counter
+        mov ecx, edx		; set width counter
+        rep stosb			; fill one row
+        pop ecx				; restore height counter
+        add edi, SCRWIDTH	; move to the next row
+        sub edi, edx		; reset edi to the start of the next row
+        loop @@fillLoop
+
+    ret
+ENDP drawColoredRectangle
+
+; Fill the background (for mode 13h) faster
+; (uses stosd optimization)
+;	* fillcolor: input color
+PROC fillBackgroundFaster
+	ARG 	@@fillcolor:byte
+	USES 	eax, ecx, edi
+
+	; Initialize video memory address.
+	mov	edi, VMEMADR
+	
+	; copy color value across all bytes of eax
+	mov al, [@@fillcolor]	; ???B
+	mov ah, al				; ??BB
+	mov cx, ax			
+	shl eax, 16				; BB00
+	mov ax, cx				; BBBB
+
+	; Scan the whole video memory and assign the background colour.
+	mov	ecx, SCRWIDTH*SCRHEIGHT/4
+	rep	stosd
+
+	ret
+ENDP fillBackgroundFaster
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -402,13 +545,22 @@ PROC main
     ; test dynamic grid
     ;call addDynamicEntitytoArray, 1
     ;call printDynamicEntityState, 0
-    call initializeDynamicEntity, 0, 0, 1
-    call printGrid, 0, offset dynamic_grid
-    call printDynamicEntityState, 0
-    call printDecimal, 0
-    call removeDynamicEntity, 0, 0
-    call printGrid, 0, offset dynamic_grid
-    call printDynamicEntityState, 0
+    ;call initializeDynamicEntity, 0, 0, 1
+    ;call printGrid, 0, offset dynamic_grid
+    ;call printDynamicEntityState, 0
+    ;call printDecimal, 0
+    ;call removeDynamicEntity, 0, 0
+    ;call printGrid, 0, offset dynamic_grid
+    ;call printDynamicEntityState, 0
+
+    ; test graphics
+    call setVideoMode, 13h
+    call fillBackgroundFaster, 93 ; fill the screen with white
+
+    ; draw 50 * 200 rectangle, reserved space for UI
+    call drawColoredRectangle, 0, 0, 50, 200, 0
+
+    call drawBackground ; draw the grid
 
     ; Main game loop
 gameLoop:
