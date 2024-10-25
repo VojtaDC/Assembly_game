@@ -18,7 +18,8 @@ VMEMADR EQU 0A0000h	; video memory address
 SCRWIDTH EQU 320	; screen witdth
 SCRHEIGHT EQU 200	; screen height
 ROWS EQU 5		; number of rows
-COLUMNS EQU 20		; number of columns
+COLUMNS EQU 9		; number of columns
+BMP_HEADER_SIZE equ 54
 
 ; -------------------------------------------------------------------
 CODESEG
@@ -33,22 +34,13 @@ PROC setVideoMode
 
 	ret
 ENDP setVideoMode
-PROC fillBackground
-	ARG @@color:BYTE
-    USES edi, ecx
-        	mov edi, VMEMADR    ; Point EDI to video memory
-        	mov al, [@@color]     ; Load the color into AL
-        	mov ecx, SCRWIDTH * SCRHEIGHT ; Number of pixels
-        	REP stosb           ; Fill video memory with the color
-        	ret
-ENDP fillBackground
 
 ; Check if a specific keystroke is pressed.
 ; If the specified key is pressed, exit the program.
 ; Otherwise, return.
 PROC checkForSpecificKeystroke
     ARG     @@key:byte
-    USES    eax
+    USES    eax, ebx, ecx, edx, esi, edi
 
     ; Check if a key is pressed
     mov     ah, 01h
@@ -90,6 +82,7 @@ PROC terminateProcess
 	call setVideoMode, 03h
 	mov	ax,04C00h
 	int 21h
+
 	ret
 ENDP terminateProcess
 
@@ -179,16 +172,17 @@ ENDP printGrid
 
 ; change content of a cell in the grid
 PROC updateCell
-    ARG @@x:BYTE, @@y:BYTE, @@value:BYTE
-    USES eax, ebx, edi
+    ARG @@x:BYTE, @@y:BYTE, @@value:BYTE, @@bias:BYTE, @@grid:DWORD
+    USES eax, ebx, edi, esi
 
     ; Calculate the offset of the cell in the grid
-    mov edi, offset grid
+    mov edi, [@@grid]
     movzx eax, [@@y]
     imul eax, COLUMNS
-    imul eax, 8
+    movzx ecx, [@@bias]
+    imul eax,  ecx; the size of the entity structure
     movzx ebx, [@@x]
-    imul ebx, 8
+    imul ebx, ecx ; the size of the entity structure
     add eax, ebx
 
     ; Set the value of the cell
@@ -199,6 +193,32 @@ PROC updateCell
     ret
 
 ENDP updateCell
+
+; function that displays state of an entity in the grid
+PROC printStaticEntityState
+    ARG @@x:BYTE, @@y:BYTE
+    USES eax, ebx, ecx, edx, esi
+
+    ; Calculate the offset of the cell in the grid
+    mov esi, offset grid
+    movzx eax, [@@y]
+    imul eax, COLUMNS
+    imul eax, 8
+    add al, [@@x]
+    imul eax, 8
+    add esi, eax
+    lodsb
+
+    ; Print the entity state - let's start with just the type
+    add al, '0'
+    mov ah, 0Eh
+    int 10h
+
+    ret
+
+ENDP printStaticEntityState
+
+
 
 ; function to move an entity from one position to another
 PROC moveCell
@@ -228,159 +248,82 @@ ENDP moveCell
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
-; dynamic grid functions
+; functions for dynamic entities
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
-; function to change content of a cell in the dynamic grid
-PROC updateDynamicCell
-    ARG @@x:BYTE, @@y:BYTE, @@value:BYTE
-    USES eax, ebx, ecx, edx, edi
 
-    ; Calculate the offset of the cell in the grid
-    mov edi, offset dynamic_grid
-    movzx eax, [@@y]
-    imul eax, COLUMNS
-    add al, [@@x]
-    add edi, eax
+; function to get type of an entity
+PROC getEntityType
+    ARG @@x:BYTE, @@y:BYTE, @@grid:DWORD
+    USES eax, ebx, ecx, edx, esi, edi, ebp, esp
 
-    ; Set the value of the cell
-    mov al, [@@value]
-    stosb
+        ; Calculate the offset of the cell in the grid
+        mov esi, [@@grid]
+        movzx eax, [@@y]
+        imul eax, COLUMNS
+        add al, [@@x]
+        add esi, eax
+        xor eax, eax
+        lodsb ; this gives the index of the entity in the dynamic_entities_array
 
-    ret
+        ; Get the type of the entity
+        mov esi, offset dynamic_entities_array
+        add esi, eax
+        xor eax, eax
+        lodsb
 
-ENDP updateDynamicCell
+        cmp al, -1
+        je unknown_entity
 
-; function to initialize a new entity in the dynamic entities array
-; returns the index of the entity in the dynamic entities array on the stack if successful
-; returns -1 on the stack if the dynamic entities array is full -- TODO
-PROC addDynamicEntitytoArray
-    ARG @@type:BYTE ; lets start with just adding a type
-    USES eax, ebx, ecx, edx, edi
+        ; Print the type of the entity
+        call printDecimal, eax
 
-            ; Load the value of free_index into eax
-            mov al, [free_index]
-            movzx eax, al  ; Zero-extend al to eax to ensure correct offset calculation
+        ret
 
-            ; Calculate the address of the first free index in the dynamic_entities_array
+    unknown_entity:
+        mov edx, offset msg_unknown
+        mov ah, 09h
+        int 21h
+
+        ret
+
+ENDP getEntityType
+
+; function to initialize a dynamic entity
+PROC initializeDynamicEntity
+    ARG @@x:BYTE, @@y:BYTE, @@type:BYTE
+    USES eax, ebx, ecx, edx, edi, esi, ebp, esp
+
+            ; start with only adding the type - TODO add more properties
+
+            ; first allocate space for the entity in the dynamic_entities_array
+            ; secondly, set the type of the entity 
+            ; thirdly, set the position of the entity in the dynamic_grid
+
+            movzx eax, [free_index]
             mov edi, offset dynamic_entities_array
             add edi, eax
-
-        occupied_check:
-            ; check if that position is already occupied
-            mov ebx, [edi]
-            cmp ebx, -1
-            jne full_space
-            jmp free_space
-
-        full_space:
-            add edi, 1 ; move to the next position in the dynamic_entities_array
-            jmp occupied_check
-        free_space:
-            ; Store the entity type at the calculated position
+            xor eax, eax
             mov al, [@@type]
             stosb
 
-            ; push the free_index used
             mov al, [free_index]
-            push eax
+            mov bl, [@@type]
+            mov cl, [@@x]
+            mov dl, [@@y]
+            call updateCell, ecx, edx, eax, 1, offset dynamic_grid
 
+            inc [free_index]
+            push eax
+            mov edx, offset msg_type
+            mov ah, 09h
+            int 21h
+            xor eax, eax
+            pop eax
             call printDecimal, eax
 
-            ; Increment the free_index
-            mov al, [free_index]
-            inc al
-            mov [free_index], al
-            
             ret
-ENDP addDynamicEntitytoArray
-
-; function to print state of an entity in the dynamic entities array
-PROC printDynamicEntityState
-    ARG @@index: BYTE
-    USES eax, ebx, ecx, edx, edi
-
-    ; Get the entity at the specified index
-    mov al, [@@index]
-    movzx eax, al  ; Zero-extend al to eax to ensure correct offset calculation
-    mov edi, offset dynamic_entities_array
-    add edi, eax
-    lodsb
-
-    ; Print the entity state - let's start with just the type
-    add al, '0'
-    mov ah, 0Eh
-    int 10h
-
-    ret
-ENDP printDynamicEntityState
-
-; function that initializes an entity
-PROC initializeDynamicEntity
-    ARG @@x:BYTE, @@y:BYTE, @@type:BYTE 
-    USES eax, ebx, ecx, edx, edi
-
-    ; initialize the entity in the dynamic_entities_array
-    ; lets start with just adding a type
-    ; put the index of the entity in dynamic_entities_array into the dynamic_grid
-
-    ; Pass the entity type to addDynamicEntitytoArray
-    xor eax, eax
-    mov al, [@@type]
-    call addDynamicEntitytoArray, eax
-
-    ; The index of the newly added entity is in free_index - 1
-    mov al, [free_index]
-    dec al  ; free_index points to the next free slot, so decrement to get the current entity index
-    movzx eax, al  ; Zero-extend al to eax
-
-    ; Pass the coordinates and entity index to updateDynamicCell
-    mov bl, [@@x]
-    mov cl, [@@y]
-    call updateDynamicCell, ebx, ecx, eax
-
-    ret
-
 ENDP initializeDynamicEntity
-
-; function to remove an entity
-PROC removeDynamicEntity
-    ARG @@x:BYTE, @@y:BYTE
-    USES eax, ebx, ecx, edx, edi
-
-    ; get the index in the grid
-    ; clear the entity in the dynamic_entities_array
-    ; clear the entity in the dynamic_grid
-
-    movzx eax, [@@y]
-    imul eax, COLUMNS
-    add al, [@@x]
-    mov edi, offset dynamic_grid
-    add edi, eax
-
-    ; Get the entity index from the dynamic_grid
-    lodsb
-
-    ; Clear the entity in the dynamic_entities_array
-    mov edi, offset dynamic_entities_array
-    add edi, eax
-    mov al, -1
-    stosb
-
-    ; Clear the entity in the dynamic_grid
-    mov al, [@@x]
-    mov bl, [@@y]
-    call updateDynamicCell, eax, ebx, -1
-
-    ret
-
-
-ENDP removeDynamicEntity
-
-; --------------------------------------------------------------------------------------------------------------------------------------
-
-; functions for graphics
-
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -393,28 +336,34 @@ PROC main
 
     ;Set video mode to 13h
     ;call setVideoMode, 13h
-
-    ;call updateCell, 0, 0, 5
-    ;call printGrid, 7
-    ;call moveCell, 0, 0, 10, 0
-    ;call printGrid, 7
-
-    ; test dynamic grid
-    ;call addDynamicEntitytoArray, 1
-    ;call printDynamicEntityState, 0
-    call initializeDynamicEntity, 0, 0, 1
+    
+    call initializeDynamicEntity, 8, 0, 1
+    call initializeDynamicEntity, 8, 2, 1
+    call initializeDynamicEntity, 7, 0, 2
+    call initializeDynamicEntity, 4, 4, 10
     call printGrid, 0, offset dynamic_grid
-    call printDynamicEntityState, 0
-    call printDecimal, 0
-    call removeDynamicEntity, 0, 0
-    call printGrid, 0, offset dynamic_grid
-    call printDynamicEntityState, 0
+    call getEntityType, 8, 0, offset dynamic_grid
+    call getEntityType, 8, 2, offset dynamic_grid
+    call getEntityType, 7, 0, offset dynamic_grid
+    call getEntityType, 4, 4, offset dynamic_grid
+    
+
+   ; call fillBackgroundFaster, 93 ; fill the screen with white
+
+    ; draw 50 * 200 rectangle, reserved space for UI
+  ;  call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
 
     ; Main game loop
 gameLoop:
 
     ; Update game state and render frame
     ; ...
+   ; call drawBackground ; draw the grid
+    ;call drawPlant, 50, 0 ; draw a plant at position 10, 10
+    ;call drawZombie, 290, 0 ; draw a zombie at position 100, 100
+    ;call drawProjectile, 260, 0 ; draw a projectile at position 150, 150
+  ;  call drawStaticEntitiesOnGrid, 7, offset grid ; draw the plants
+   ; call drawStaticEntitiesOnGrid, 0, offset dynamic_grid ; draw the zombies and projectiles
     
     ; if ESC pressed, exit the program
     call    checkForSpecificKeystroke, 001Bh
@@ -442,9 +391,13 @@ DATASEG
     dynamic_entities_array ENTITY 100 dup (<>) ; make space for 100 entities
     free_index db 0 ; index of the first free entity in the dynamic_entities_array
     mob_capacity db 100 ; maximum number of entities in the dynamic_entities_array
+    mob_counter db 0 ; number of entities in the dynamic_entities_array
 
+    sprite db "test.bmp", 0
+    buffer db BMP_HEADER_SIZE + 320 * 200 dup (0)
 
-
+    msg_unknown db "Unknown entity type", 10, 13, "$"
+    msg_type db "free index is", 10, 13, "$"
 
     ; Template entity structure
     ; Structure of an entity:
