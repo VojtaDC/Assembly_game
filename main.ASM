@@ -254,8 +254,10 @@ ENDP moveCell
 
 ; function to get type of an entity
 PROC getEntityType
-    ARG @@x:BYTE, @@y:BYTE, @@grid:DWORD
-    USES eax, ebx, ecx, edx, esi, edi, ebp, esp
+    ARG @@x:BYTE, @@y:BYTE, @@grid:DWORD RETURNS eax
+    USES ebx, ecx, edx, esi, edi, ebp, esp 
+
+        xor eax, eax
 
         ; Calculate the offset of the cell in the grid
         mov esi, [@@grid]
@@ -276,18 +278,48 @@ PROC getEntityType
         je unknown_entity
 
         ; Print the type of the entity
-        call printDecimal, eax
+        ;call printDecimal, eax
+        ; returns the type of the entity in eax
 
         ret
 
     unknown_entity:
-        mov edx, offset msg_unknown
-        mov ah, 09h
-        int 21h
+        ;mov edx, offset msg_unknown
+        ;mov ah, 09h
+        ;int 21h
+        mov eax, 255
+        ; returns -1 if the entity is unknown
+
 
         ret
 
 ENDP getEntityType
+
+; function to get entity given an index
+PROC getEntityFromArray     
+    ARG @@index:BYTE RETURNS eax
+    USES esi
+
+        xor eax, eax
+        ; Get the type of the entity
+        mov esi, offset dynamic_entities_array
+        movzx eax, [@@index]
+        add esi, eax
+        xor eax, eax
+        lodsb
+
+        cmp al, -1
+        je unknown_entity_on_index
+        movzx eax, al
+
+        ret
+
+    unknown_entity_on_index:
+        mov eax, 255
+
+        ret
+
+ENDP getEntityFromArray
 
 ; function to initialize a dynamic entity
 PROC initializeDynamicEntity
@@ -314,16 +346,372 @@ PROC initializeDynamicEntity
             call updateCell, ecx, edx, eax, 1, offset dynamic_grid
 
             inc [free_index]
-            push eax
-            mov edx, offset msg_type
-            mov ah, 09h
-            int 21h
-            xor eax, eax
-            pop eax
-            call printDecimal, eax
+            ;push eax
+            ;mov edx, offset msg_type
+            ;mov ah, 09h
+            ;int 21h
+            ;xor eax, eax
+            ;pop eax
+            ;call printDecimal, eax
 
             ret
 ENDP initializeDynamicEntity
+
+; function to remove an entity from the dynamic_grid and subsequently from the dynamic_entities_array
+PROC removeDynamicEntity
+    ARG @@x:BYTE, @@y:BYTE
+    USES eax, ebx, ecx, edx, edi, esi
+
+        ; first get the index of the entity in the dynamic_entities_array
+        ; then set the type of the entity to -1 in the dynamic_grid
+        ; then set the type of the entity to -1 in the dynamic_entities_array
+
+        movzx eax, [@@y]
+        imul eax, COLUMNS
+        add al, [@@x]
+        mov esi, offset dynamic_grid
+        add esi, eax
+        lodsb
+        
+        xor edi, edi
+        mov edi, offset dynamic_entities_array
+        add edi, eax
+        xor eax, eax
+        mov al, -1
+        stosb
+
+        movzx eax, [@@y]
+        imul eax, COLUMNS
+        add al, [@@x]
+        mov edi, offset dynamic_grid
+        add edi, eax
+        mov al, -1
+        stosb
+
+        ret
+
+ENDP removeDynamicEntity
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+
+; functions for graphics
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+
+; state of the game = state of the grid + state of the entities
+; - print out the grid
+; - print out the plants
+; - print out the zombies and projectiles
+
+; First step: (naive)
+; - function that prints the whole state
+
+; Second step: (more optimal)
+; - function that updates the state, for example, moves the entities, checks for collisions, etc.
+; - this function needs to print only the entities that have changed, so only the cells that have changed
+; - make this function have a parameters that specify which cell to update, this way, 
+;   whenever a function that changes the game state is called, it can call this function with the changed cell
+
+
+
+; Draw State:
+; - draw level 0 (background) - draw the grid
+; - draw level 1 (static entities) - draw the plants
+; - draw level 2 (dynamic entities) - draw the zombies and projectiles
+
+; function to draw the static entities on the grid
+PROC drawStaticEntitiesOnGrid
+    ARG @@bias:BYTE, @@grid:DWORD
+    LOCAL @@type:BYTE
+    USES eax, ebx, ecx, edx, edi, esi
+
+    ; Iterate over the grid, for each cell, check if there is a plant
+    ; If there is a plant, draw the plant, read the type of the plant from the grid
+    ; TODO make code better, too much repetition
+
+    mov esi, [@@grid]               ; Set ESI to point to the grid array
+    mov ecx, ROWS
+    mov edx, COLUMNS
+
+    outer_loop_draw_plants:
+        push ecx
+        mov ecx, edx
+
+    inner_loop_draw_plants:
+        lodsb
+        mov [@@type], al
+        mov bl, [@@bias]
+        add esi, ebx
+        cmp al, 0
+        je draw_plant_entity
+        ; ADD HERE further types of plants
+        jmp after_draw_entity
+
+    draw_plant_entity:
+        
+        ; x = (columns - ecx) * 30 + 50
+        ; y = (rows - TOS) * 40
+        mov eax, ecx ; save ecx
+        pop ecx ; get the row
+        mov ebx, ROWS
+        sub ebx, ecx
+        imul ebx, 40
+        push ecx ; put the row back
+        mov ecx, eax ; restore ecx
+        mov eax, COLUMNS
+        sub eax, ecx
+        imul eax, 30
+        add eax, 50
+        push ecx
+        movzx ecx, [@@type]
+        
+        call drawEntity, eax, ebx, ecx
+        pop ecx
+        jmp after_draw_entity
+    
+    after_draw_entity:
+        loop inner_loop_draw_plants
+        
+        pop ecx
+        loop outer_loop_draw_plants
+
+        ret
+ENDP drawStaticEntitiesOnGrid
+
+; function to draw an entity, given a type
+PROC drawEntity
+    ARG @@x0:word, @@y0:word, @@type: byte
+    USES eax, ebx, ecx, edx, edi
+
+        ; check the type of the entity
+        ; draw the entity based on the type
+
+        movzx eax, [@@type] ; TODO make switch case
+        cmp al, 0
+        je draw_plant
+        cmp al, 1
+        je draw_zombie
+        cmp al, 2
+        je draw_projectile
+        ret
+    
+    draw_plant:
+        movzx ebx, [@@x0]
+        movzx ecx, [@@y0]
+        call drawPlant, ebx, ecx
+        ret
+    
+    draw_zombie:
+        movzx ebx, [@@x0]
+        movzx ecx, [@@y0]
+        call drawZombie, ebx, ecx
+        ret
+    
+    draw_projectile:
+        movzx ebx, [@@x0]
+        movzx ecx, [@@y0]
+        call drawProjectile, ebx, ecx
+        ret
+
+ENDP drawEntity
+
+; function to draw a plant -- temporary, later on we will use sprites
+PROC drawPlant
+    ARG 	@@x0:word, @@y0:word
+    USES 	eax, ebx, ecx, edx, edi
+
+        ; draw 2 rectangles for the plant
+        ; one for the stem and one for the head
+
+        ; draw the stem
+        mov ax, [@@x0]
+        add eax, 13
+        mov bx, [@@y0]
+        add ebx, 20
+        call drawColoredRectangle, eax, ebx, 4, 19, 42 ; draw the stem
+
+        ; draw the head
+        mov ax, [@@x0]
+        add eax, 10
+        mov bx, [@@y0]
+        add ebx, 10
+        call drawColoredRectangle, eax, ebx, 10, 10, 45 ; draw the head
+
+        ret
+
+ENDP drawPlant
+
+; draw zombie
+PROC drawZombie
+    ARG 	@@x0:word, @@y0:word
+    USES eax, ebx, ecx, edx, edi
+
+    ; draw the head
+    mov ax, [@@x0]
+    add eax, 10
+    mov bx, [@@y0]
+    add ebx, 10
+    call drawColoredRectangle, eax, ebx, 10, 10, 6
+
+    ; draw the body
+    mov ax, [@@x0]
+    add eax, 12
+    mov bx, [@@y0]
+    add ebx, 20
+    call drawColoredRectangle, eax, ebx, 6, 12, 4
+
+    ; draw the legs
+    mov ax, [@@x0]
+    add eax, 13
+    mov bx, [@@y0]
+    add ebx, 32
+    call drawColoredRectangle, eax, ebx, 4, 7, 55
+
+    ret
+
+ENDP drawZombie
+
+; draw projectile
+PROC drawProjectile
+    ARG 	@@x0:word, @@y0:word
+    USES eax, ebx, ecx, edx, edi
+
+    ; draw a rectangle for the projectile
+    mov ax, [@@x0]
+    add eax, 10
+    mov bx, [@@y0]
+    add ebx, 20
+    call drawColoredRectangle, eax, ebx, 10, 5, 21
+
+    ret
+
+ENDP drawProjectile
+
+; function to draw the grid
+; call for every cell draw rectangle
+PROC drawBackground
+    USES eax, ebx, ecx, edx, edi
+
+    mov eax, 50 ; x offset
+    mov ebx, 0 ; y offset
+    mov ecx, ROWS ; number of rows
+    mov edx, COLUMNS ; number of columns
+
+    outer_loop_draw_background:
+        push ecx ; save outer loop counter
+        mov ecx, edx ; set inner loop counter
+
+    inner_loop_draw_background:
+        call drawRectangle, eax, ebx, 30, 40, 2 ; draw a rectangle at the current position
+        add eax, 30 ; move to the next column
+        loop inner_loop_draw_background ; repeat for each column
+
+        mov eax, 50
+        add ebx, 40 ; move to the next row
+        pop ecx ; restore outer loop counter
+        loop outer_loop_draw_background ; repeat for each row<
+
+        ret
+ENDP drawBackground
+
+; ** generic functions for drawing **
+
+; Draw a rectangle (video mode 13h)
+; 	* draws the rectangle from position (x0,y0) with
+;	  positive width 'w' and height 'h', with color "col"
+PROC drawRectangle
+	ARG 	@@x0:word, @@y0:word, @@w:word, @@h:word, @@col: byte
+	USES 	eax, ecx, edx, edi 
+
+	; Compute the index of the rectangle's top left corner
+	movzx eax, [@@y0]
+	mov edx, SCRWIDTH
+	mul edx
+	add	ax, [@@x0]
+
+	; Compute top left corner address
+	mov edi, VMEMADR
+	add edi, eax
+	
+	; Plot the top horizontal edge.
+	movzx edx, [@@w]	; store width in edx for later reuse
+	mov	ecx, edx
+	mov	al,[@@col]
+	rep stosb
+	sub edi, edx		; reset edi to left-top corner
+	
+	; plot both vertical edges
+	movzx ecx,[@@h]
+	@@vertLoop:
+		mov	[edi],al		; left edge
+		mov	[edi+edx-1],al	; right edge
+		add	edi, SCRWIDTH
+		loop @@vertLoop
+	; edi should point at the bottom-left corner now
+	sub edi, SCRWIDTH
+
+	; Plot the bottom horizontal edge.
+	mov	ecx, edx
+	rep stosb
+	ret
+ENDP drawRectangle
+
+; Draw a colored rectangle (video mode 13h)
+; 	* draws the rectangle from position (x0,y0) with
+;	  positive width 'w' and height 'h', with color "col"
+PROC drawColoredRectangle
+    ARG 	@@x0:word, @@y0:word, @@w:word, @@h:word, @@col: byte
+    USES 	eax, ecx, edx, edi ; note: MUL uses edx!
+
+    ; Compute the index of the rectangle's top left corner
+    movzx eax, [@@y0]
+    mov edx, SCRWIDTH
+    mul edx
+    add	ax, [@@x0]
+
+    ; Compute top left corner address
+    mov edi, VMEMADR
+    add edi, eax
+    
+    ; Fill the rectangle
+    movzx edx, [@@w]	; store width in edx for later reuse
+    mov	al,[@@col]
+    movzx ecx, [@@h]	; store height in ecx for loop
+    @@fillLoop:
+        push ecx			; save height counter
+        mov ecx, edx		; set width counter
+        rep stosb			; fill one row
+        pop ecx				; restore height counter
+        add edi, SCRWIDTH	; move to the next row
+        sub edi, edx		; reset edi to the start of the next row
+        loop @@fillLoop
+
+    ret
+ENDP drawColoredRectangle
+
+; Fill the background (for mode 13h) faster
+; (uses stosd optimization)
+;	* fillcolor: input color
+PROC fillBackgroundFaster
+	ARG 	@@fillcolor:byte
+	USES 	eax, ecx, edi
+
+	; Initialize video memory address.
+	mov	edi, VMEMADR
+	
+	; copy color value across all bytes of eax
+	mov al, [@@fillcolor]	; ???B
+	mov ah, al				; ??BB
+	mov cx, ax			
+	shl eax, 16				; BB00
+	mov ax, cx				; BBBB
+
+	; Scan the whole video memory and assign the background colour.
+	mov	ecx, SCRWIDTH*SCRHEIGHT/4
+	rep	stosd
+
+	ret
+ENDP fillBackgroundFaster
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -337,16 +725,33 @@ PROC main
     ;Set video mode to 13h
     ;call setVideoMode, 13h
     
+    ;call initializeDynamicEntity, 8, 0, 1
+    ;call initializeDynamicEntity, 8, 2, 1
+    ;call initializeDynamicEntity, 7, 0, 2
+    ;call initializeDynamicEntity, 4, 4, 3
+    ;call printGrid, 0, offset dynamic_grid
+    ;call getEntityType, 8, 0, offset dynamic_grid
+    ;call printDecimal, eax
+    ;call getEntityType, 8, 2, offset dynamic_grid
+    ;call getEntityType, 7, 0, offset dynamic_grid
+    ;call printDecimal, eax
+    ;call getEntityType, 4, 4, offset dynamic_grid
+    ;call printDecimal, eax
+    ;call getEntityFromArray, 3
+    ;call printDecimal, eax
     call initializeDynamicEntity, 8, 0, 1
-    call initializeDynamicEntity, 8, 2, 1
-    call initializeDynamicEntity, 7, 0, 2
-    call initializeDynamicEntity, 4, 4, 10
+    
     call printGrid, 0, offset dynamic_grid
     call getEntityType, 8, 0, offset dynamic_grid
-    call getEntityType, 8, 2, offset dynamic_grid
-    call getEntityType, 7, 0, offset dynamic_grid
-    call getEntityType, 4, 4, offset dynamic_grid
+    call printDecimal, eax
+
+    call removeDynamicEntity, 8, 0
+
+    call printGrid, 0, offset dynamic_grid
+    call getEntityType, 8, 0, offset dynamic_grid
+    call printDecimal, eax
     
+
 
    ; call fillBackgroundFaster, 93 ; fill the screen with white
 
