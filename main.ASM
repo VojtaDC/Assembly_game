@@ -930,6 +930,69 @@ PROC fillBackgroundFaster
 
 	ret
 ENDP fillBackgroundFaster
+; --------------------------------------------------------------------------------------------------------------------------------------
+
+;Vojta functions
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+
+PROC  startTime
+    USES eax,ebx,ecx, edx
+
+    mov ah, 2Ch
+    int 21h
+
+    movzx eax, ch
+    imul eax, 3600
+    movzx ebx, cl
+    imul ebx, 60
+    add eax, ebx
+       
+    movzx edx, dh
+    add eax, edx
+
+    mov [start_time], eax ;set start_time to current time
+
+    ret
+ENDP startTime
+
+PROC setElapsedTime
+    USES eax, ebx, ecx, edx
+    
+    mov ah, 2Ch
+    int 21h
+
+    movzx eax, ch
+    imul eax, 3600
+    movzx ebx, cl
+    imul ebx, 60
+    add eax, ebx
+       
+    movzx edx, dh
+    add eax, edx
+    
+    sub eax, [start_time]
+    mov [elapsed_time], eax
+
+    ret
+ENDP setElapsedTime
+    
+PROC printTimer
+    USES eax, ebx, ecx, edx
+
+    mov ebx, [elapsed_time]
+    call setElapsedTime
+
+    cmp ebx, elapsed_time
+    je skip_print
+
+    mov eax, [elapsed_time]
+    call printDecimal, eax  
+
+    ret
+    skip_print:
+    ret
+ENDP printTimer
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -943,6 +1006,7 @@ PROC main
     ;Set video mode to 13h
     call setVideoMode, 13h
     
+    call startTime
     call initializeDynamicEntity, 0, 0, 0
     call initializeDynamicEntity, 0, 1, 0
     call initializeDynamicEntity, 0, 2, 0
@@ -987,6 +1051,8 @@ gameLoop:
     call drawDynamicEntitiesOnGrid, 0, offset dynamic_grid ; draw the zombies and projectiles
     
     
+    call printTimer
+
     ; if ESC pressed, exit the program
     call    checkForSpecificKeystroke, 001Bh
     jmp gameLoop
@@ -994,6 +1060,9 @@ ENDP main
 
 ; -------------------------------------------------------------------
 DATASEG
+
+    start_time dd 0
+    elapsed_time dd 0
 
     STRUC ENTITY
         type    db -1
