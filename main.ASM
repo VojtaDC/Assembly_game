@@ -17,7 +17,7 @@ ASSUME cs:_TEXT,ds:FLAT,es:FLAT,fs:FLAT,gs:FLAT
 VMEMADR EQU 0A0000h	; video memory address
 SCRWIDTH EQU 320	; screen witdth
 SCRHEIGHT EQU 200	; screen height
-ROWS EQU 5		; number of rows
+ROWS EQU 5 		; number of rows
 COLUMNS EQU 9		; number of columns
 BMP_HEADER_SIZE equ 54
 
@@ -232,44 +232,19 @@ PROC printStaticEntityState
 
 ENDP printStaticEntityState
 
-
-
-; function to move an entity from one position to another
-PROC moveCell
-    ARG @@x1:BYTE, @@y1:BYTE, @@x2:BYTE, @@y2:BYTE
-    USES eax, ebx, ecx, edx, esi
-
-        ; use the updateCell function to move the entity
-        mov esi, offset grid
-        movzx eax, [@@y1]
-        imul eax, COLUMNS
-        add al, [@@x1]
-        add esi, eax
-        lodsb
-        push eax
-
-        mov al, [@@x2]
-        mov bl, [@@y2]
-        pop ecx
-        call updateCell, eax, ebx, ecx
-
-        mov al, [@@x1]
-        mov bl, [@@y1]
-        call updateCell, eax, ebx, -1
-
-        ret
-ENDP moveCell
-
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
 ; functions for dynamic entities
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
+; Do memory management for dynamic entities
+; TODO: count the amount of initialized entities and check if there is still space for a new entity to prevent overflow
+
 ; function to get type of an entity
 PROC getEntityType
     ARG @@x:BYTE, @@y:BYTE, @@grid:DWORD RETURNS eax
-    USES ebx, ecx, edx, esi, edi, ebp, esp 
+    USES ebx, ecx, edx, esi, edi 
 
         xor eax, eax
 
@@ -293,6 +268,7 @@ PROC getEntityType
 
         ; Print the type of the entity
         ;call printDecimal, eax
+
         ; returns the type of the entity in eax
 
         ret
@@ -340,7 +316,7 @@ PROC incrementFreeIndex
     USES eax
 
         inc [free_index]
-        cmp [free_index], 3
+        cmp [free_index], 99
         jne no_reset
         mov [free_index], 0
 
@@ -422,6 +398,160 @@ PROC removeDynamicEntity
         ret
 
 ENDP removeDynamicEntity
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+
+; Game logic
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+
+; **UPDATE LOCATION OF ENTITIES**
+
+; function to move a value of a cell in the grid
+PROC moveValue
+    ARG @@x1:BYTE, @@y1:BYTE, @@x2:BYTE, @@y2:BYTE, @@bias:BYTE, @@grid:DWORD
+    USES eax, ebx, ecx, edi, esi
+
+        ; get the value of the first cell
+        ; set the value of the second cell to the value of the first cell
+        ; set the value of the first cell to -1
+
+        ; Calculate the offset of the first cell in the grid
+        mov esi, [@@grid]
+        movzx eax, [@@y1]
+        imul eax, COLUMNS
+        movzx ecx, [@@bias]
+        imul eax, ecx
+        add al, [@@x1]
+        imul eax, ecx
+        mov ebx, eax
+        add esi, eax
+        lodsb
+        push eax
+
+        cmp eax, -1
+        je no_move_value_needed
+        
+        mov edi, [@@grid]
+        add edi, ebx
+        mov al, -1
+        stosb
+
+        ; Calculate the offset of the second cell in the grid
+        mov edi, [@@grid]
+        movzx eax, [@@y2]
+        imul eax, COLUMNS
+        movzx ecx, [@@bias]
+        imul eax, ecx
+        add al, [@@x2]
+        imul eax, ecx
+        add edi, eax
+        xor eax, eax
+        pop eax
+        stosb ; set the value of the second cell to the value of the first cell
+
+    no_move_value_needed:
+
+        ret
+ENDP moveValue
+
+; function that moves an entity in a certain direction
+PROC moveEntityDirection
+    ARG @@x:BYTE, @@y:BYTE, @@directionX:BYTE, @@directionY:BYTE, @@direction:BYTE, @@bias:BYTE, @@grid:DWORD
+    USES eax, ebx, ecx, edx, edi, esi
+
+        ; move (x, y) to (x + directionX, y + directionY)
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        movzx ecx, [@@x]
+        movzx edx, [@@y]
+        movzx edi, [@@bias]
+        mov esi, [@@grid]
+        cmp [@@direction], 0
+        je move_entity_positive_direction
+
+        sub cl, [@@directionX]
+        sub dl, [@@directionY]
+        jmp move_entity_call
+        
+    move_entity_positive_direction:
+        add cl, [@@directionX]
+        add dl, [@@directionY]
+    move_entity_call:
+        call moveValue, eax, ebx, ecx, edx, edi, esi      
+
+        ret
+
+ENDP moveEntityDirection
+
+; function that moves an entity in the positive x direction only once
+PROC moveEntityRight
+    ARG @@x:BYTE, @@y:BYTE, @@bias:BYTE, @@grid:DWORD
+    
+    mov al, [@@x]
+    mov bl, [@@y]
+    movzx edi, [@@bias]
+    mov esi, [@@grid]
+    call moveEntityDirection, eax, ebx, 1, 0, 0, edi, esi
+
+    ret
+
+ENDP moveEntityRight
+
+; function that moves an entity in the negative x direction only once
+PROC moveEntityLeft
+    ARG @@x:BYTE, @@y:BYTE, @@bias:BYTE, @@grid:DWORD
+    
+    mov al, [@@x]
+    mov bl, [@@y]
+    movzx edi, [@@bias]
+    mov esi, [@@grid]
+    call moveEntityDirection, eax, ebx, 1, 0, 1, edi, esi
+
+    ret
+
+ENDP moveEntityLeft
+
+; main algorithm that updates the game state
+PROC updateGameState
+    USES eax, ebx, ecx, edx, edi, esi
+
+        ; spawn zombies
+        ; spawn projectiles
+
+        ; handle movement of entities:
+        ; - move zombies
+        ; - move projectiles
+        ; - if out of bounds, remove entity, if zombie, call player loses health function
+        ; if movement is not possible, handle collision detection
+        ; - if a zombie collides with a plant, the plant loses health, if the plant has no health, it is removed
+        ; - if a projectile collides with a zombie, the zombie loses health and the projectile is removed
+
+        ; iterate from 0 to avoid having to calculate the x and y coordinates
+        mov ecx, 0
+        mov edx, 0
+
+    outer_loop_update_game_state:
+
+    inner_loop_update_game_state:
+        ; start with a naive implementation that moves everyhing to the right
+        call moveEntityRight, ecx, edx, 1, offset dynamic_grid
+        inc ecx
+        cmp ecx, COLUMNS
+        jne inner_loop_update_game_state
+        mov ecx, 0
+        inc edx
+        cmp edx, ROWS
+        jne outer_loop_update_game_state ; loop is over
+        
+        ret
+
+ENDP updateGameState
+
+; **COLLISION DETECTION**
+
+
+
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -577,9 +707,9 @@ PROC drawEntity
         movzx eax, [@@type] ; TODO make switch case
         cmp al, 0
         je draw_plant
-        cmp al, 1
+        cmp al, 10
         je draw_zombie
-        cmp al, 2
+        cmp al, 20
         je draw_projectile
         ret
     
@@ -811,34 +941,51 @@ PROC main
     pop	es
 
     ;Set video mode to 13h
-    ;call setVideoMode, 13h
+    call setVideoMode, 13h
     
-    call initializeDynamicEntity, 0, 0, 1
-    call initializeDynamicEntity, 1, 1, 3
-    call initializeDynamicEntity, 2, 2, 2
-    call removeDynamicEntity, 1, 1
-    call getEntityFromArray, 1
-    call printDecimal, eax
-    ;call initializeDynamicEntity, 1, 1, 4
-    call printGrid, 0, offset dynamic_grid
-    
+    call initializeDynamicEntity, 0, 0, 0
+    call initializeDynamicEntity, 0, 1, 0
+    call initializeDynamicEntity, 0, 2, 0
+    call initializeDynamicEntity, 0, 3, 0
+    call initializeDynamicEntity, 0, 4, 0
+
+    call initializeDynamicEntity, 7, 0, 10
+    call initializeDynamicEntity, 7, 1, 10
+    call initializeDynamicEntity, 7, 2, 10
+    call initializeDynamicEntity, 7, 3, 10
+    call initializeDynamicEntity, 7, 4, 10
+
+    call initializeDynamicEntity, 2, 0, 20
+    call initializeDynamicEntity, 2, 1, 20
+    call initializeDynamicEntity, 2, 2, 20
+    call initializeDynamicEntity, 2, 3, 20
+    call initializeDynamicEntity, 2, 4, 20
+    ;call moveValue, 1, 0, 3, 0, 1, offset dynamic_grid
+    ;call moveEntityDirection, 2, 0, 1, 0, 0, 1,offset dynamic_grid
+    ;call moveEntityRight, 2, 0, 1, offset dynamic_grid
+    ;call moveEntityLeft, 7, 4, 1, offset dynamic_grid
 
     call fillBackgroundFaster, 93 ; fill the screen with white
 
+    ;call moveValue, 0, 0, 7, 0, 1, offset dynamic_grid
+    ;call moveValue, 2, 2, 3, 1, 1, offset dynamic_grid
+
     ; draw 50 * 200 rectangle, reserved space for UI
     call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
+    ;call printGrid, 0, offset dynamic_grid ; print the grid to the screen
 
     ; Main game loop
 gameLoop:
 
     ; Update game state and render frame
-    ; ...
+    call updateGameState
     call drawBackground ; draw the grid
     ;call drawPlant, 50, 0 ; draw a plant at position 10, 10
     ;call drawZombie, 290, 0 ; draw a zombie at position 100, 100
     ;call drawProjectile, 260, 0 ; draw a projectile at position 150, 150
     ;call drawStaticEntitiesOnGrid, 7, offset grid ; draw the plants
     call drawDynamicEntitiesOnGrid, 0, offset dynamic_grid ; draw the zombies and projectiles
+    
     
     ; if ESC pressed, exit the program
     call    checkForSpecificKeystroke, 001Bh
