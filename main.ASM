@@ -24,6 +24,12 @@ BMP_HEADER_SIZE equ 54
 ; -------------------------------------------------------------------
 CODESEG
 
+; --------------------------------------------------------------------------------------------------------------------------------------
+
+; functions for general purpose
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+
 ; Set the video mode
 PROC setVideoMode
 	ARG 	@@VM:byte
@@ -118,6 +124,12 @@ PROC printDecimal
             ret
 ENDP printDecimal
 
+; --------------------------------------------------------------------------------------------------------------------------------------
+
+; functions for the grid
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+
 ; print grid to screen in text mode
 PROC printGrid
     ARG @@bias:BYTE, @@grid:DWORD
@@ -146,10 +158,12 @@ PROC printGrid
 
     print_zero:
         mov al, ':'                     ; Set AL to '0'
+        ;call printDecimal, al
 
     print_char:
         mov ah, 0Eh                     ; BIOS teletype function
         int 10h                         ; Call BIOS interrupt to print character
+        ;call printDecimal, eax
         loop inner_loop_draw            ; Repeat for each column
 
         ; Print newline
@@ -304,6 +318,7 @@ PROC getEntityFromArray
         ; Get the type of the entity
         mov esi, offset dynamic_entities_array
         movzx eax, [@@index]
+        imul eax, 8
         add esi, eax
         xor eax, eax
         lodsb
@@ -321,19 +336,41 @@ PROC getEntityFromArray
 
 ENDP getEntityFromArray
 
+PROC incrementFreeIndex
+    USES eax
+
+        inc [free_index]
+        cmp [free_index], 3
+        jne no_reset
+        mov [free_index], 0
+
+    no_reset:
+
+        ret
+ENDP incrementFreeIndex
+
 ; function to initialize a dynamic entity
 PROC initializeDynamicEntity
     ARG @@x:BYTE, @@y:BYTE, @@type:BYTE
-    USES eax, ebx, ecx, edx, edi, esi, ebp, esp
+    USES eax, ebx, ecx, edx, edi, esi
 
-            ; start with only adding the type - TODO add more properties
+        find_free_position:
+            movzx eax, [free_index] ; get the current index and multiply it by the size of the entity structure, 8
+            call printDecimal, eax
+            call getEntityFromArray, eax
+            call printDecimal, eax
+            cmp eax, 255
+            jne no_free_position
+            jmp found_free_position
 
-            ; first allocate space for the entity in the dynamic_entities_array
-            ; secondly, set the type of the entity 
-            ; thirdly, set the position of the entity in the dynamic_grid
+        no_free_position:
+            call incrementFreeIndex
+            jmp find_free_position
 
-            movzx eax, [free_index]
+        found_free_position:
             mov edi, offset dynamic_entities_array
+            movzx eax, [free_index] ; get the current index and multiply it by the size of the entity structure, 8
+            imul eax, 8
             add edi, eax
             xor eax, eax
             mov al, [@@type]
@@ -345,14 +382,7 @@ PROC initializeDynamicEntity
             mov dl, [@@y]
             call updateCell, ecx, edx, eax, 1, offset dynamic_grid
 
-            inc [free_index]
-            ;push eax
-            ;mov edx, offset msg_type
-            ;mov ah, 09h
-            ;int 21h
-            ;xor eax, eax
-            ;pop eax
-            ;call printDecimal, eax
+            call incrementFreeIndex
 
             ret
 ENDP initializeDynamicEntity
@@ -375,6 +405,7 @@ PROC removeDynamicEntity
         
         xor edi, edi
         mov edi, offset dynamic_entities_array
+        imul eax, 8
         add edi, eax
         xor eax, eax
         mov al, -1
@@ -780,36 +811,17 @@ PROC main
     pop	es
 
     ;Set video mode to 13h
-    call setVideoMode, 13h
+    ;call setVideoMode, 13h
     
-    ;call initializeDynamicEntity, 8, 0, 1
-    ;call initializeDynamicEntity, 8, 2, 1
-    ;call initializeDynamicEntity, 7, 0, 2
-    ;call initializeDynamicEntity, 4, 4, 3
-    ;call printGrid, 0, offset dynamic_grid
-    ;call getEntityType, 8, 0, offset dynamic_grid
-    ;call printDecimal, eax
-    ;call getEntityType, 8, 2, offset dynamic_grid
-    ;call getEntityType, 7, 0, offset dynamic_grid
-    ;call printDecimal, eax
-    ;call getEntityType, 4, 4, offset dynamic_grid
-    ;call printDecimal, eax
-    ;call getEntityFromArray, 3
-    ;call printDecimal, eax
-    call initializeDynamicEntity, 8, 0, 1
-    call initializeDynamicEntity, 8, 1, 1
-    call initializeDynamicEntity, 8, 2, 1
-    call initializeDynamicEntity, 8, 3, 1
-    call initializeDynamicEntity, 8, 4, 1
-    call initializeDynamicEntity, 7, 4, 2
-    call getEntityFromArray, 0
+    call initializeDynamicEntity, 0, 0, 1
+    call initializeDynamicEntity, 1, 1, 3
+    call initializeDynamicEntity, 2, 2, 2
+    call removeDynamicEntity, 1, 1
+    call getEntityFromArray, 1
     call printDecimal, eax
-    call getEntityFromArray, 3
-    call printDecimal, eax
+    ;call initializeDynamicEntity, 1, 1, 4
+    call printGrid, 0, offset dynamic_grid
     
-    
-    call updateCell, 0, 0, 0, 8, offset grid
-    call updateCell, 0, 4, 0, 8, offset grid
 
     call fillBackgroundFaster, 93 ; fill the screen with white
 
@@ -825,7 +837,7 @@ gameLoop:
     ;call drawPlant, 50, 0 ; draw a plant at position 10, 10
     ;call drawZombie, 290, 0 ; draw a zombie at position 100, 100
     ;call drawProjectile, 260, 0 ; draw a projectile at position 150, 150
-    call drawStaticEntitiesOnGrid, 7, offset grid ; draw the plants
+    ;call drawStaticEntitiesOnGrid, 7, offset grid ; draw the plants
     call drawDynamicEntitiesOnGrid, 0, offset dynamic_grid ; draw the zombies and projectiles
     
     ; if ESC pressed, exit the program
