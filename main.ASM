@@ -120,7 +120,7 @@ PROC printDecimal
             int	21h
             mov	dl, 0Ah		; New line.
             int 21h
-
+ 
             ret
 ENDP printDecimal
 
@@ -986,6 +986,8 @@ PROC printTimer
     cmp ebx, elapsed_time
     je skip_print
 
+    call setCursorPosition, 4, 2 ;keep the same cursor position 
+
     mov eax, [elapsed_time]
     call printDecimal, eax  
 
@@ -993,6 +995,19 @@ PROC printTimer
     skip_print:
     ret
 ENDP printTimer
+
+PROC setCursorPosition
+    ARG @@row:BYTE, @@col:BYTE
+    USES eax, ebx, ecx, edx
+
+    mov ah, 02h     ;function to set cursor position
+    mov bh, 00h     ;video page
+    mov dh, [@@row] ;coordinates
+    mov dl, [@@col]
+    int 10h         ;set cursor position
+
+    ret
+ENDP setCursorPosition
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
