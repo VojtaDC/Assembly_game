@@ -982,7 +982,7 @@ ENDP inflictDamageToStaticEntityFromGrid
 ; function that handles movement of dynamic entities
 PROC handleMovement
     ARG @@x:BYTE, @@y:BYTE RETURNS eax, ebx
-    USES ebx, ecx, edx, edi, esi
+    USES ecx, edx, edi, esi
 
             ; check if type of entity is valid
             ; if the type is valid, call handleProjectileMovement or handleZombieMovement
@@ -1006,6 +1006,7 @@ PROC handleMovement
             cmp al, 2
             je handle_projectile
             mov eax, 0
+            mov ebx, 0
             ret
 
         handle_zombie:
@@ -1394,7 +1395,7 @@ ENDP spawnDefaultPlant
 
 ; main algorithm that updates the game state
 PROC updateGameState
-    LOCAL @@SpawnProjectile:BYTE ; 1 if projectile should be spawned
+    LOCAL @@currentY:BYTE, @@SpawnProjectile:BYTE ; 1 if projectile should be spawned
     USES eax, ebx, ecx, edx, edi, esi
         
             ; iterate over rows
@@ -1420,37 +1421,39 @@ PROC updateGameState
             sub ebx, ecx ; ROWS - current row
             push ecx ; put the row back
             mov ecx, eax ; restore ecx
-            push ebx ; save ebx for later
+            mov [@@currentY], bl
             call handleMovement, ecx, ebx 
             ; returns how many cells to skip in eax, to prevent double movement
             ; returns the type of the entity in ebx
             sub ecx, eax
-            ; if the entity moved is zombie, set @@SpawnProjectile to 1
-            cmp [@@SpawnProjectile], 1 ; if already 1, do not change
-            je after_checking_local
-            mov [@@SpawnProjectile], bl
-
-            ; if @@SpawnProjectile is 1, handle spawning a projectile
+            ; check if a projectile should be spawned
             cmp [@@SpawnProjectile], 1
-            je handle_spawning_projectile
+            je spawn_the_projectile_on_position
+            ; if the entity moved is zombie, set @@SpawnProjectile to 1
+            cmp ebx, 1
+            je set_spawn_projectile
 
         after_checking_local:
-            pop ebx ; get the row back
             cmp ecx, 0
             je after_inner_loop_update_game_state
             dec ecx
             jmp inner_loop_update_game_state
 
-        handle_spawning_projectile:
-            pop ebx ; get the row back
+        spawn_the_projectile_on_position:
+            movzx ebx, [@@currentY]
             call handleProjectileSpawning, ecx, ebx
+            jmp after_checking_local
+
+        set_spawn_projectile:
+            call printDecimal, 99
+            mov [@@SpawnProjectile], 1 ; set @@SpawnProjectile to 1
+            jmp after_checking_local
 
         after_inner_loop_update_game_state:
             pop ecx
             loop outer_loop_update_game_state
             
             ret
-
 
 ENDP updateGameState
 
@@ -1858,10 +1861,9 @@ PROC main
     call spawnDefaultPlant, 0, 3
     call spawnDefaultPlant, 0, 4
 
-    call getDamageOfDynamicEntityFromGrid, 1, 0
-    call printDecimal, eax
-    call getValueOfStaticEntity,0,0,1
-    call printDecimal, eax
+    call updateGameState
+    call updateGameState
+    call updateGameState
     ;call printDynamicEntityStateFromArray, 1, 8, offset dynamic_entities_array
 
     ;call moveValue, 0, 0, 7, 0, 1, offset dynamic_grid
@@ -1876,7 +1878,6 @@ PROC main
 gameLoop:
 
     ; Update game state and render frame
-    call updateGameState
     
     call drawBackground ; draw the grid
     ;call drawPlant, 50, 0 ; draw a plant at position 10, 10
