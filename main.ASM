@@ -30,6 +30,26 @@ CODESEG
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
+; wait for @@framecount frames
+proc wait_VBLANK
+	ARG @@framecount: word
+	USES eax, ecx, edx
+	mov dx, 03dah 					; Wait for screen refresh
+	movzx ecx, [@@framecount]
+	
+		@@VBlank_phase1:
+		in al, dx 
+		and al, 8
+		jnz @@VBlank_phase1
+		@@VBlank_phase2:
+		in al, dx 
+		and al, 8
+		jz @@VBlank_phase2
+	loop @@VBlank_phase1
+	
+	ret 
+endp wait_VBLANK
+
 ; Set the video mode
 PROC setVideoMode
 	ARG 	@@VM:byte
@@ -136,6 +156,49 @@ PROC printDecimal
 
             ret
 ENDP printDecimal
+
+; function to print decimal without new line
+PROC printDecimalWithoutNewLine
+    ARG @@number:DWORD
+    USES eax, ebx, ecx, edx
+
+            mov	eax, [@@number]
+            mov ebx, 10
+            xor ecx, ecx
+
+        getNextDigit_without_new_line:
+            inc ecx
+            xor edx, edx
+            div ebx
+            push dx ; store remainder on stack
+            test eax, eax ; if zero, last digit
+            jnz	getNextDigit_without_new_line
+
+            mov ah, 02h
+        printDigits_without_new_line:
+            pop dx
+            add dl, '0'
+            int 21h
+            loop printDigits_without_new_line
+
+            call setCursorPosition, 4, 2
+
+            ret
+
+ENDP printDecimalWithoutNewLine
+
+PROC setCursorPosition
+    ARG @@row:BYTE, @@col:BYTE
+    USES eax, ebx, ecx, edx
+
+    mov ah, 02h     ;function to set cursor position
+    mov bh, 00h     ;video page
+    mov dh, [@@row] ;coordinates
+    mov dl, [@@col]
+    int 10h         ;set cursor position
+
+    ret
+ENDP setCursorPosition
 
 ; function to print decimal without new line
 PROC printDecimalNoNewLine
@@ -650,6 +713,35 @@ PROC getDamageOfDynamicEntityFromGrid
 
 ENDP getDamageOfDynamicEntityFromGrid
 
+; function to get the health of a dynamic entity
+PROC getHealthOfDynamicEntity
+    ARG @@index:BYTE RETURNS eax
+
+        movzx eax, [@@index]
+        call getValueOfDynamicEntity, eax, 1 ; 1 is the offset of the health value
+
+        ret
+
+ENDP getHealthOfDynamicEntity
+
+; function to get the health of a dynamic entity based on x and y
+PROC getHealthOfDynamicEntityFromGrid
+    ARG @@x:BYTE, @@y:BYTE RETURNS eax
+    USES ebx, ecx
+
+        mov esi, offset dynamic_grid
+        movzx ebx, [@@y]
+        imul ebx, COLUMNS
+        add bl, [@@x]
+        add esi, ebx
+        lodsb
+
+        call getHealthOfDynamicEntity, eax
+
+        ret
+
+ENDP getHealthOfDynamicEntityFromGrid
+
 ; function to updates one value given the value and the offset in the entity
 PROC updateDynamicEntityWithValue 
     ARG @@index:BYTE, @@value:BYTE, @@offset:BYTE
@@ -935,9 +1027,12 @@ PROC inflictDamageToDynamicEntityFromGrid
             movzx ebx, [@@damage]
             call inflictDamageToDynamicEntityFromArray, eax, ebx
 
+            cmp eax, 50
+            jg remove_unvalid_entity
             cmp eax, 0
             jg no_remove_entity
 
+        remove_unvalid_entity:
             ; remove the entity
             movzx eax, [@@x]
             movzx ebx, [@@y]
@@ -991,6 +1086,8 @@ PROC handleMovement
 
             ; return the type of the moved entity in ebx
             ; if zombie, return 1 else return 0
+            xor eax, eax
+            xor ebx, ebx
 
             mov al, [@@x]
             mov bl, [@@y]
@@ -1041,6 +1138,8 @@ PROC handleProjectileMovement
             ; if collision returns 0, move the projectile to the right
             ; if collision returns 1 -- should not happen
             ; if collision returns 2, remove the projectile and inflict damage to the entity
+            xor eax, eax
+            xor ebx, ebx
 
             mov al, [@@x]
             mov bl, [@@y]
@@ -1056,7 +1155,7 @@ PROC handleProjectileMovement
             inc al
             cmp al, COLUMNS
             je remove_projectile_movement
-
+        check_for_collision_type:
             ; check if collision with entity to the right
             mov al, [@@x]
             mov bl, [@@y]
@@ -1074,6 +1173,14 @@ PROC handleProjectileMovement
             xor eax, eax
             mov al, [@@x]
             call moveEntityRight, eax, ebx, 1, offset dynamic_grid
+            ; After moving, check for collision again
+            mov al, [@@x]
+            mov bl, [@@y]
+            mov cl, al
+            inc cl
+            call collisionBetweenDynamicEntities, ecx, ebx, eax, ebx
+            cmp eax, 2
+            je inflict_dmg
             ret
 
         inflict_dmg:
@@ -1082,7 +1189,7 @@ PROC handleProjectileMovement
             mov ecx, eax
             movzx eax, [@@x]
             inc eax
-            call inflictDamageToDynamicEntityFromGrid, eax, ebx, ecx ; TODO: damage should be a variable
+            call inflictDamageToDynamicEntityFromGrid, eax, ebx, 3 ; TODO: damage should be a variable
             jmp remove_projectile_movement
 
         remove_projectile_movement:
@@ -1445,7 +1552,7 @@ PROC updateGameState
             jmp after_checking_local
 
         set_spawn_projectile:
-            call printDecimal, 99
+            ;call printDecimal, 99
             mov [@@SpawnProjectile], 1 ; set @@SpawnProjectile to 1
             jmp after_checking_local
 
@@ -1861,15 +1968,15 @@ PROC main
     call spawnDefaultPlant, 0, 3
     call spawnDefaultPlant, 0, 4
 
-    call updateGameState
-    call updateGameState
-    call updateGameState
+    ;call handleMovement, 3, 0
+    ;call updateGameState
+    ;call updateGameState
     ;call printDynamicEntityStateFromArray, 1, 8, offset dynamic_entities_array
 
     ;call moveValue, 0, 0, 7, 0, 1, offset dynamic_grid
     ;call moveValue, 2, 2, 3, 1, 1, offset dynamic_grid
-    call fillBackgroundFaster, 93 ; fill the screen with white
-    call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
+    ;call fillBackgroundFaster, 93 ; fill the screen with white
+    ;call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
 
     ; draw 50 * 200 rectangle, reserved space for UI
     ;call printGrid, 0, offset dynamic_grid ; print the grid to the screen
@@ -1878,8 +1985,14 @@ PROC main
 gameLoop:
 
     ; Update game state and render frame
-    
+    call updateGameState
+
+    call wait_VBLANK, 30 ; wait for the next frame
+    call fillBackgroundFaster, 93 ; fill the screen with white
+    ;call getHealthOfDynamicEntityFromGrid, 4, 0
+    ;call printDecimalWithoutNewLine, eax
     call drawBackground ; draw the grid
+    ;call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
     ;call drawPlant, 50, 0 ; draw a plant at position 10, 10
     ;call drawZombie, 290, 0 ; draw a zombie at position 100, 100
     ;call drawProjectile, 260, 0 ; draw a projectile at position 150, 150
@@ -1894,7 +2007,7 @@ ENDP main
 
 ; -------------------------------------------------------------------
 DATASEG
-
+ 
     STRUC ENTITY
         type    db -1
         health  db ?
@@ -1908,6 +2021,7 @@ DATASEG
 
 	palette		db 768 dup (?) ; 256 colors * 3 bytes per color
     grid        ENTITY 100 dup (<>)  ; 5 rows * 20 columns
+
 
     dynamic_grid db 100 dup (-1) ; 5 rows * 20 columns
     dynamic_entities_array ENTITY 100 dup (<>) ; make space for 100 entities
