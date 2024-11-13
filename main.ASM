@@ -36,7 +36,7 @@ CODESEG
 ; function given a x calculates the pixel position, the right side of the entity
 PROC convertXtoPixelPosition
     ARG @@x:BYTE RETURNS eax
-    USES ebx, ecx, edx
+    USES ebx, ecx, edx, esi, edi
 
     xor eax, eax
     mov al, [@@x]
@@ -53,37 +53,37 @@ ENDP convertXtoPixelPosition
 
 ; function to check if x is on the boundary of the next cell
 PROC checkIfXIsOnBoundary
-    ARG @@x:BYTE RETURNS eax, ebx ; eax is the x, ebx is whether it passed the boundary
-    USES ecx, edx
+        ARG @@x:BYTE RETURNS eax, ebx ; eax is the x, ebx is whether it passed the boundary
+        USES ecx, edx, esi, edi
 
-    xor eax, eax
-    xor ebx, ebx
-    movzx eax, [@@x]
-    cmp eax, 0
-    je x_is_freshly_on_boundary
+        xor eax, eax
+        xor ebx, ebx
+        movzx eax, [@@x]
+        cmp eax, 0
+        je x_is_freshly_on_boundary
 
-    cmp eax, 30
-    jl still_within_cell
+        cmp eax, 30
+        jl still_within_cell
 
-    ; if greater than 30, x is on the boundary or outside the cell
-    mov ebx, 1
+        ; if greater than 30, x is on the boundary or outside the cell
+        mov ebx, 1
 
-    ret
+        ret
 
-still_within_cell:
-    mov ebx, 0
+    still_within_cell:
+        mov ebx, 0
 
-    ret
+        ret
 
-x_is_freshly_on_boundary: ; skip the division if x is freshly on the boundary
-    mov eax, 1
+    x_is_freshly_on_boundary: ; skip the division if x is freshly on the boundary
+        mov eax, 1
 
-    ret
+        ret
 
 ENDP checkIfXIsOnBoundary
 
 PROC  startTime
-    USES eax,ebx,ecx, edx
+    USES eax,ebx,ecx, edx, esi, edi
 
     mov ah, 2Ch
     int 21h
@@ -103,7 +103,7 @@ PROC  startTime
 ENDP startTime
 
 PROC setElapsedTime
-    USES eax, ebx, ecx, edx
+    USES eax, ebx, ecx, edx, esi, edi
     
     mov ah, 2Ch
     int 21h
@@ -124,7 +124,7 @@ PROC setElapsedTime
 ENDP setElapsedTime
     
 PROC printTimer
-    USES eax, ebx, ecx, edx
+    USES eax, ebx, ecx, edx, esi, edi
 
     mov ebx, [elapsed_time]
     call setElapsedTime
@@ -145,7 +145,7 @@ ENDP printTimer
 ; wait for @@framecount frames
 proc wait_VBLANK
 	ARG @@framecount: word
-	USES eax, ecx, edx
+	USES eax, ecx, edx, ebx, edi, esi
 	mov dx, 03dah 					; Wait for screen refresh
 	movzx ecx, [@@framecount]
 	
@@ -404,7 +404,7 @@ ENDP printGrid
 ; change content of a cell in the grid
 PROC updateCell
     ARG @@x:BYTE, @@y:BYTE, @@value:BYTE, @@bias:BYTE, @@grid:DWORD
-    USES eax, ebx, edi, esi
+    USES eax, ebx, ecx, edx, esi, edi
 
     ; Calculate the offset of the cell in the grid
     mov edi, [@@grid]
@@ -804,7 +804,7 @@ ENDP getSpeedOfDynamicEntity
 ; get speed of a dynamic entity based on x and y
 PROC getSpeedOfDynamicEntityFromGrid
     ARG @@x:BYTE, @@y:BYTE RETURNS eax
-    USES ebx, ecx
+    USES ebx, ecx, esi
 
         mov esi, offset dynamic_grid
         movzx ebx, [@@y]
@@ -884,7 +884,7 @@ PROC incrementXofDynamicEntity
         mov al, [edi]
         mov bl, [@@amount]
         add al, bl
-        stosb
+        mov [edi], al
 
         ret
 
@@ -1208,9 +1208,23 @@ PROC moveEntityDirection
 
 ENDP moveEntityDirection
 
+; function that clears all registers
+PROC clearRegisters
+
+        xor eax, eax
+        xor ebx, ebx
+        xor ecx, ecx
+        xor edx, edx
+        xor edi, edi
+        xor esi, esi
+
+        ret
+ENDP clearRegisters
+
 ; function that moves an entity in the positive x direction only once
 PROC moveEntityRight
     ARG @@x:BYTE, @@y:BYTE, @@bias:BYTE, @@grid:DWORD
+    USES eax, ebx, ecx, edx, edi, esi
     
     mov al, [@@x]
     mov bl, [@@y]
@@ -1225,6 +1239,7 @@ ENDP moveEntityRight
 ; function that moves an entity in the negative x direction only once
 PROC moveEntityLeft
     ARG @@x:BYTE, @@y:BYTE, @@bias:BYTE, @@grid:DWORD
+    USES eax, ebx, ecx, edx, edi, esi
     
     mov al, [@@x]
     mov bl, [@@y]
@@ -1423,8 +1438,6 @@ PROC handleProjectileMovement
             ; if collision returns 0, move the projectile to the right
             ; if collision returns 1 -- should not happen
             ; if collision returns 2, remove the projectile and inflict damage to the entity
-            xor eax, eax
-            xor ebx, ebx
 
             mov al, [@@x]
             mov bl, [@@y]
@@ -1432,6 +1445,7 @@ PROC handleProjectileMovement
             call getEntityType, eax, ebx, offset dynamic_grid
             cmp al, 255
             jne checker
+            pop eax
             ret
 
         checker:
@@ -1455,17 +1469,18 @@ PROC handleProjectileMovement
             ret
 
         move_projectile_right:
-            mov al, [@@x]
-            call getSpeedOfDynamicEntityFromGrid, eax, ebx
-            mov ecx, eax
-            movzx eax, [@@x]
-            call handleXupdate, eax, ebx, ecx
+            ;mov al, [@@x]
+
+            ;call getSpeedOfDynamicEntityFromGrid, eax, ebx
+            ;mov ecx, eax
+            ;movzx eax, [@@x]
+            ;movzx ebx, [@@y]
+            ;call handleXupdate, eax, ebx, ecx
             ;cmp eax, 1 ; check if the projectile passed the boundary
-            ;je move_projectile_to_the_right
-            ;ret
+            je move_projectile_to_the_right
+            ret
 
         move_projectile_to_the_right:
-            xor eax, eax
             mov al, [@@x]
             call moveEntityRight, eax, ebx, 1, offset dynamic_grid
             ret
@@ -1498,6 +1513,8 @@ PROC handleZombieMovement
             call getEntityType, eax, ebx, offset dynamic_grid
             cmp al, 255
             jne checker_zombie
+            mov eax, 0
+            pop eax
             ret
 
         checker_zombie:
@@ -1526,6 +1543,7 @@ PROC handleZombieMovement
             call handleXupdate, eax, ebx, ecx
             cmp eax, 1 ; check if the zombie passed the boundary
             je move_entity_to_the_left
+            mov eax, 0
             ret
         
         move_entity_to_the_left:
@@ -1759,7 +1777,7 @@ ARG @@x:BYTE, @@y:BYTE
         movzx eax, [@@x]
         movzx ebx, [@@y]
         call initializeStaticEntity, eax, ebx, 9
-        call updateStaticEntityWithValues, eax, ebx, 10, 0, 8, 0, 0, 0, 0 ; a potato does not have damage, means that it can not spawn a projectile
+        call updateStaticEntityWithValues, eax, ebx, 10, 0, 1, 0, 0, 0, 0 ; a potato does not have damage, means that it can not spawn a projectile
 
         ret
 ENDP spawnPotato
@@ -2034,7 +2052,7 @@ ENDP addXoffset
 
 ; function to draw an entity, given a type
 PROC drawEntity
-    ARG @@x0:word, @@y0:word, @@type: byte
+    ARG @@x0:word, @@y0:word, @@type:byte, @@offset:byte
     USES eax, ebx, ecx, edx, edi
 
         ; check the type of the entity
@@ -2059,12 +2077,14 @@ PROC drawEntity
     
     draw_zombie:
         movzx ebx, [@@x0]
+        ;sub bl, [@@offset]
         movzx ecx, [@@y0]
         call drawZombie, ebx, ecx
         ret
     
     draw_projectile:
         movzx ebx, [@@x0]
+        ;add bl, [@@offset]
         movzx ecx, [@@y0]
         call drawProjectile, ebx, ecx
         ret
@@ -2273,7 +2293,7 @@ ENDP fillBackgroundFaster
 PROC renderFrame
     USES eax, ebx, ecx, edx, edi, esi
 
-    call wait_VBLANK, 5 ; wait for the next frame
+    call wait_VBLANK, 1 ; wait for the next frame
     call fillBackgroundFaster, 93 ; fill the screen with white
     call drawBackground ; draw the grid
     call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
@@ -2373,9 +2393,9 @@ PROC drawCrosshair
 
     ; Calculate the top-left corner of the rectangle
     movzx   eax, [@@x]
-    sub     eax, 5          ; Offset for centering horizontally
+    ;sub     eax, 5          ; Offset for centering horizontally
     movzx   ebx, [@@y]
-    sub     ebx, 5          ; Offset for centering vertically
+    ;sub     ebx, 5          ; Offset for centering vertically
 
     ; Draw the rectangle
     call    drawColoredRectangle, eax, ebx, 10, 10, 15 ; 10x10 rectangle with color 15 (white)
@@ -2390,6 +2410,7 @@ PROC mouseHandler
     mov ax, 3
     int 33h         ; Call interrupt to get mouse position and button status
     ; AX = button status, CX = X position, DX = Y position
+
 
     ; Draw crosshair at mouse position
     call drawCrosshair, cx, dx
@@ -2417,7 +2438,7 @@ PROC main
 @@mouse_present:
     ; Set video mode to 13h and install mouse handler
     call    setVideoMode, 13h
-    call    mouse_install, offset mouseHandler
+    ;call    mouse_install, offset mouseHandler
 
     ; Spawn entities
     call spawnDefaultZombie, 8, 0
@@ -2426,29 +2447,20 @@ PROC main
     call spawnDefaultZombie, 8, 3
     call spawnDefaultZombie, 8, 4
 
-    call spawnDefaultPlant, 0, 0
-    ;call spawnDefaultPlant, 0, 1
-    ;call spawnDefaultPlant, 0, 2
-    ;call spawnDefaultPlant, 0, 3
-    ;call spawnDefaultPlant, 0, 4
-
-    call updateGameState
-    call updateGameState
-
-
-    ;call handleXupdate, 8, 0, 29
-    ;call incrementXofDynamicEntityFromGrid, 8, 0
+    ;call spawnDefaultPlant, 0, 0
+   ; call spawnDefaultPlant, 0, 1
+    call spawnDefaultPlant, 0, 2
+    call spawnDefaultPlant, 0, 3
+    call spawnDefaultPlant, 0, 4
 
     ; Main game loop
 @@gameLoop:
     ; Process other game logic
     call updateGameState
+    ; Render the frame
     call renderFrame
 
-    call getXOfDynamicEntity, 6
-    ;call getSpeedOfDynamicEntityFromGrid, 8, 0
-   ; call getXOfDynamicEntityFromGrid, 8, 0
-    ;call checkIfXIsOnBoundary, eax
+    call getXOfDynamicEntity, 0
     call printDecimalWithoutNewLine, eax
 
     ; Check for ESC key to exit
@@ -2474,7 +2486,6 @@ DATASEG
 
 	palette		db 768 dup (?) ; 256 colors * 3 bytes per color
     grid        ENTITY 100 dup (<>)  ; 5 rows * 20 columns
-
 
     dynamic_grid db 100 dup (-1) ; 5 rows * 20 columns
     dynamic_entities_array ENTITY 100 dup (<>) ; make space for 100 entities
@@ -2512,6 +2523,6 @@ DATASEG
 ; -------------------------------------------------------------------
 ; STACK
 ; -------------------------------------------------------------------
-STACK 100h
+STACK 2000h
 
 END main
