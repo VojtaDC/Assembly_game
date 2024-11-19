@@ -1258,36 +1258,67 @@ ENDP moveEntityLeft
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
 ; get entity type
-PROC getType
+
+
+; get entity types (both mainType and subType)
+PROC getEntityTypes
+    ARG @@raw:BYTE RETURNS eax, ebx
+    USES ecx
+        ; function to get both mainType and subType of an entity
+        ; type consists of two digits, first digit is type, which discriminates between zombies, plants and so on
+        ; the second digit discriminates between different types of the same entity, for example, different types of zombies
+        ;
+        ; return both the first digit (mainType) and the second digit (subType) of the type
+        ; get the result by dividing the type by 10, the result is the mainType, the remainder is the subType
+        xor eax, eax
+        xor ebx, ebx
+        mov al, [@@raw]
+        cmp al, -1
+        je unknown_entity_get_types
+        cmp al, 255
+        je unknown_entity_get_types
+        mov cl, 10
+        xor ah, ah
+        div cl ; divide al by cl, result in al (mainType), remainder in ah (subType)
+
+        movzx eax, al ; mainType in eax
+        movzx ebx, ah ; subType in ebx
+
+        ret
+
+    unknown_entity_get_types:
+        mov eax, 255
+        mov ebx, 255
+
+        ret
+
+ENDP getEntityTypes
+
+; get entity mainType
+PROC getMainType
+    ARG @@raw:BYTE RETURNS eax
+    USES ebx
+    
+        movzx eax, [@@raw]
+        call getEntityTypes, eax
+        ; mainType is al in eax, geen verdere actie nodig
+
+        ret
+
+ENDP getMainType
+
+; get entity subType
+PROC getSubType
     ARG @@raw:BYTE RETURNS eax
     USES ebx
 
-        ; type consits of two digits, first digit is type, which discriminates between zombies, plants and so on
-        ; the second digit discriminates between different types of the same entity, for example, different types of zombies
-
-        ; return the first digit of the type
-        ; get the result by dividing the type by 10, the remainder is the second digit, we don't need it
-        xor eax, eax
-        mov al, [@@raw]
-        cmp al, -1
-        je unknown_entity_get_type
-        cmp al, 255
-        je unknown_entity_get_type
-        mov bl, 10
-        xor ah, ah
-        div bl ; divide al by bl, result in al, remainder in ah
-
-        ; returns the first digit of the type in eax
-        movzx eax, al
+        movzx eax, [@@raw]
+        call getEntityTypes, eax
+        mov eax, ebx ; verplaats subType van ebx naar eax
 
         ret
 
-    unknown_entity_get_type:
-        mov eax, 255
-
-        ret
-
-ENDP getType
+ENDP getSubType
 
 ; **HEALTH AND DAMAGE**
 
@@ -1392,7 +1423,7 @@ PROC handleMovement
             mov al, [@@x]
             mov bl, [@@y]
             call getEntityType, eax, ebx, offset dynamic_grid
-            call getType, eax 
+            call getMainType, eax 
             cmp al, 255
             je invalid_type_movement
             cmp al, -1
@@ -1631,12 +1662,12 @@ PROC collisionBetweenDynamicEntities
             mov al, [@@x1]
             mov bl, [@@y1]
             call getEntityType, eax, ebx, offset dynamic_grid
-            call getType, eax ; get rid of the second digit
+            call getMainType, eax ; get rid of the second digit
             movzx ecx, al ; type of first entity in cl
             mov al, [@@x2]
             mov bl, [@@y2]
             call getEntityType, eax, ebx, offset dynamic_grid
-            call getType, eax
+            call getMainType, eax
             ; type of second entity in al
             cmp al, 255
             je invalid_entity
@@ -1673,12 +1704,12 @@ PROC collisionBetweenStaticAndDynamicEntities
             mov al, [@@x1]
             mov bl, [@@y1]
             call getEntityType, eax, ebx, offset dynamic_grid
-            call getType, eax ; get rid of the second digit
+            call getMainType, eax ; get rid of the second digit
             movzx ecx, al ; type of first entity in cl
             mov al, [@@x2]
             mov bl, [@@y2]
             call getStaticEntityType, eax, ebx
-            call getType, eax
+            call getMainType, eax
             ; type of second entity in al
             cmp al, 255
             je invalid_entity_static
@@ -1741,7 +1772,7 @@ PROC spawnProjectile
             movzx eax, [@@x]
             movzx ebx, [@@y]
             call getStaticEntityType, eax, ebx
-            call getType, eax
+            call getMainType, eax
             cmp al, 255
             je invalid_entity_spawn_projectile
             cmp al, -1
