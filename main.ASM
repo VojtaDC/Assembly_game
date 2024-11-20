@@ -2330,6 +2330,7 @@ PROC renderFrame
     call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
     call drawStaticEntitiesOnGrid, 9, offset grid ; draw the plants
     call drawDynamicEntitiesOnGrid, 0, offset dynamic_grid ; draw the zombies and projectiles 
+    call ShowCursor ; show the mouse cursor on the screen
 
     ret
 
@@ -2369,12 +2370,15 @@ PROC mouse_internal_handler NOLANGUAGE
     mov     es, ax
 
     pop     ax
+
     call    [custom_mouse_handler]
     
     pop     es
     pop     ds
+    
     retf
 
+    ; Internal variable to keep track of D
     theDS   dw  ?
 ENDP mouse_internal_handler
 
@@ -2408,13 +2412,16 @@ PROC mouse_install
     ret
 ENDP mouse_install
 
-PROC getMousePosition
-    mov     ax, 3
-    int     33h         ; Call interrupt to get mouse position and button status
-    ; AX = button status, CX = X position, DX = Y position
-    ret
-ENDP getMousePosition
+PROC ShowCursor
+    USES eax
 
+    mov ax, 1
+    int 33h
+
+    ret
+ENDP ShowCursor
+
+;drawCrosshair currently not used
 PROC drawCrosshair
     ARG     @@x:WORD, @@y:WORD
     USES    eax, ebx, edi
@@ -2424,9 +2431,9 @@ PROC drawCrosshair
 
     ; Calculate the top-left corner of the rectangle
     movzx   eax, [@@x]
-    ;sub     eax, 5          ; Offset for centering horizontally
+    ; sub     eax, 5          ; Offset for centering horizontally
     movzx   ebx, [@@y]
-    ;sub     ebx, 5          ; Offset for centering vertically
+    ; sub     ebx, 5          ; Offset for centering vertically
 
     ; Draw the rectangle
     call    drawColoredRectangle, eax, ebx, 10, 10, 15 ; 10x10 rectangle with color 15 (white)
@@ -2435,19 +2442,126 @@ PROC drawCrosshair
 ENDP drawCrosshair
 
 PROC mouseHandler
-    USES eax, ebx, ecx, edx, esi, edi
+    USES    eax, ebx, ecx, edx
+	
+	and bl, 3			; check for two mouse buttons (2 low end bits)
+	jz @@skipit			; only execute if a mousebutton is pressed
 
-    ; Get mouse position
-    mov ax, 3
-    int 33h         ; Call interrupt to get mouse position and button status
-    ; AX = button status, CX = X position, DX = Y position
+    movzx eax, dx		; get moused height
+	mov edx, SCRWIDTH
+	mul edx				; obtain vertical offset in eax
+	sar cx, 1			; horizontal cursor position is doubled in input 
+	add ax, cx			; add horizontal offset
+	add eax, VMEMADR	; eax now contains pixel address mouse is pointing to
+	mov [eax], bl		; change color
 
-
-    ; Draw crosshair at mouse position
-    call drawCrosshair, cx, dx
-
+	@@skipit:
     ret
 ENDP mouseHandler
+
+PROC handleMouseClick
+    USES eax, ebx, ecx, edx
+    xor ecx, ecx
+    xor edx, edx
+    ; Controleer de status van de muisknoppen
+    mov ax, 3
+    int 33h
+
+    sar cx, 1			; horizontal cursor position is doubled in input 
+    mov [mouseX], ecx
+    mov [mouseY], edx
+    ; De status van de knoppen staat in bx
+    test bx, 1       ; Linker muisknop ingedrukt?
+    jz no_click
+    
+
+
+    call printMouseCoordinates, [mouseX], [mouseY]
+
+no_click:
+    ret
+ENDP handleMouseClick
+
+PROC printMouseCoordinates
+    ARG @@x:WORD, @@y:WORD
+    USES eax, ebx, ecx, edx
+
+    ; Set cursor position 
+    call setCursorPosition, 5, 0
+
+    ; Print 'X:'
+    call printChar, 88 ; 'ASCII for X'
+    call printChar, 58 ; 'ASCII for :'
+    ; Print the X coordinate
+    movzx eax, [@@x]
+    call printDecimalWithoutNewLine, eax
+
+    ; Set cursor position 
+    call setCursorPosition, 8, 0
+
+    ; Print 'Y:'
+    call printChar, 89 ; 'ASCII for X'
+    call printChar, 58 ; 'ASCII for :'
+    ; Print the Y coordinate
+    movzx eax, [@@y]
+    call printDecimalWithoutNewLine, eax
+
+    ret
+ENDP printMouseCoordinates
+
+;set mouseX and mouseY to currect mouse position (currently not in use)
+PROC getMouseCoordinates 
+    USES eax, ebx, ecx, edx
+
+    mov ax, 3
+    int 33h
+
+    sar cx, 1			; horizontal cursor position is doubled in input 
+
+    mov [mouseX], ecx
+    mov [mouseY], edx
+
+    ret
+ENDP getMouseCoordinates
+
+;limiting the mouse position window (for later use)
+PROC setMouseVerticalLimit
+    ARG @@MIN:WORD, @@MAX:WORD
+    USES eax, ebx, ecx, edx
+
+    mov ax, 8
+    mov cx, [@@MIN]
+    mov dx, [@@MAX]
+
+    int 33h
+
+    ret
+ENDP setMouseVerticalLimit
+
+PROC setMouseHorizontalLimit
+    ARG @@MIN:WORD, @@MAX:WORD
+    USES eax, ebx, ecx, edx
+
+    mov ax, 7
+    mov cx, [@@MIN]
+    mov dx, [@@MAX]
+
+    int 33h
+
+    ret
+ENDP setMouseHorizontalLimit
+
+PROC setMouseLimits
+    ARG @@XMIN:WORD, @@XMAX:WORD, @@YMIN:WORD, @@YMAX:WORD
+    USES eax, ebx, ecx, edx
+
+    call setMouseHorizontalLimit, [@@XMIN], [@@XMAX]
+    call setMouseVerticalLimit, [@@YMIN], [@@YMAX]
+
+    int 33h
+
+    ret
+ENDP setMouseLimits
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -2466,10 +2580,13 @@ PROC main
     mov     edx, offset msg_no_mouse
     int     21h
 
+
+
 @@mouse_present:
     ; Set video mode to 13h and install mouse handler
     call    setVideoMode, 13h
-    ;call    mouse_install, offset mouseHandler
+    call    mouse_install, offset mouseHandler
+
 
     ; Spawn entities
     call spawnDefaultZombie, 8, 0
@@ -2488,9 +2605,13 @@ PROC main
 @@gameLoop:
     ; Process other game logic
     call updateGameState
+
+    ; Set mouseX and mouseY + print when MouseClick
+    call handleMouseClick
+
     ; Render the frame
     call renderFrame
-
+    
     call getXOfDynamicEntity, 0
     call printDecimalWithoutNewLine, eax
 
@@ -2501,7 +2622,7 @@ ENDP main
 
 ; -------------------------------------------------------------------
 DATASEG
- 
+    
     STRUC ENTITY
         type    db -1
         health  db ?
@@ -2537,8 +2658,10 @@ DATASEG
     start_time dd 0
     elapsed_time dd 0
 
-    custom_mouse_handler    dd ?
-
+    custom_mouse_handler dd ?
+    
+    mouseX  dd 0
+    mouseY  dd 0
     ; Template entity structure
     ; Structure of an entity:
     ; - 1 byte: type of entity (0 for plant, 1 for zombie, 2 for projectile, 3 for sun, 4 for lawn mower)
