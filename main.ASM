@@ -21,10 +21,13 @@ ROWS EQU 5 		; number of rows
 COLUMNS EQU 9		; number of columns
 BMP_HEADER_SIZE equ 54
 
-ENTITY_SIZE EQU 10
+FIRETIMER EQU 25
+FIREINTERVAL EQU 100
+ENTITY_SIZE EQU 12
+ENTITY_BIAS EQU 11
 MAX_ENTITIES EQU 100
 
-; -------------------------------------------------------------------
+; --------------------------------------------------------d-----------
 CODESEG
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
@@ -457,16 +460,13 @@ PROC getStaticEntityType
     USES ebx, ecx, edx, esi
 
         ; Calculate the offset of the cell in the grid
-        mov esi, offset grid
-        movzx eax, [@@y]
-        imul eax, COLUMNS
-        imul eax, ENTITY_SIZE
-        movzx ebx, [@@x]
-        imul ebx, ENTITY_SIZE
-        add eax, ebx
-        add esi, eax
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call calculateEntityGridOffset, eax, ebx , offset grid
+        mov esi, eax
         xor eax, eax
-        lodsb
+
+        mov al, [esi]
 
         cmp al, -1
         je unknown_entity_static
@@ -512,17 +512,14 @@ ENDP removeStaticEntity
 
 ; function to update static entity variables
 PROC updateStaticEntityWithValues
-    ARG @@x:BYTE, @@y:BYTE, @@health:BYTE, @@damage:BYTE, @@speed:BYTE, @@direction:BYTE, @@animationFrame:BYTE, @@animationTimer:BYTE, @@spriteIndex:BYTE
+    ARG @@x:BYTE, @@y:BYTE, @@health:BYTE, @@damage:BYTE, @@speed:BYTE, @@direction:BYTE, @@animationFrame:BYTE, @@animationTimer:BYTE, @@spriteIndex:BYTE,  @@fireInterval:BYTE, @@fireTimer:BYTE
     USES eax, ebx, ecx, edx, edi, esi
 
-        mov edi, offset grid
-        movzx eax, [@@y]
-        imul eax, COLUMNS
-        imul eax, ENTITY_SIZE
-        movzx ebx, [@@x]
-        imul ebx, ENTITY_SIZE
-        add eax, ebx
-        add edi, eax
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call calculateEntityGridOffset, eax, ebx , offset grid
+        
+        mov edi, eax
         inc edi ; skip the type
 
         mov al, [@@health]
@@ -554,6 +551,12 @@ PROC updateStaticEntityWithValues
         mov al, [@@spriteIndex]
         stosb
 
+        mov al, [@@fireInterval]
+        stosb   
+
+        mov al, [@@fireTimer]
+        stosb   
+
         ret
 
 ENDP updateStaticEntityWithValues
@@ -563,14 +566,11 @@ PROC updateStaticEntityWithValue
     ARG @@x:BYTE, @@y:BYTE, @@value:BYTE, @@offset:BYTE
     USES eax, ebx, ecx, edx, edi, esi
 
-        mov edi, offset grid
-        movzx eax, [@@y]
-        imul eax, COLUMNS
-        imul eax, ENTITY_SIZE
-        movzx ebx, [@@x]
-        imul ebx, ENTITY_SIZE
-        add eax, ebx
-        add edi, eax
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call calculateEntityGridOffset, eax, ebx , offset grid
+
+        mov edi, eax
         movzx eax, [@@offset]
         add edi, eax
         xor eax, eax
@@ -584,21 +584,18 @@ ENDP updateStaticEntityWithValue
 
 ; function to get the value of a static entity
 PROC getValueOfStaticEntity
-    ARG @@x:BYTE, @@y:BYTE, @@ofset:BYTE RETURNS eax
+    ARG @@x:BYTE, @@y:BYTE, @@offset:BYTE RETURNS eax
     USES ebx, ecx, edx, esi, edi
 
         ; get the health of the entity
         ; return the health of the entity in eax
 
-        mov edi, offset grid
-        movzx eax, [@@y]
-        imul eax, COLUMNS
-        imul eax, ENTITY_SIZE
-        movzx ebx, [@@x]
-        imul ebx, ENTITY_SIZE
-        add eax, ebx
-        add edi, eax
-        mov cl, [@@ofset]
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call calculateEntityGridOffset, eax, ebx , offset grid
+
+        mov edi, eax
+        mov cl, [@@offset]
         add edi, ecx ; skip to the value needed 
         mov al, [edi]
 
@@ -628,14 +625,11 @@ PROC inflictDamageToStaticEntityFromArray
         ; subtract the damage from the health
         ; if the health is less than or equal to 0, remove the entity
 
-        mov edi, offset grid
-        movzx eax, [@@y]
-        imul eax, COLUMNS
-        imul eax, ENTITY_SIZE
-        movzx ebx, [@@x]
-        imul ebx, ENTITY_SIZE
-        add eax, ebx
-        add edi, eax
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call calculateEntityGridOffset, eax, ebx , offset grid
+
+        mov edi, eax
         inc edi ; skip the type
         mov al, [edi] ; load the health value
         sub al, [@@damage]
@@ -647,6 +641,35 @@ PROC inflictDamageToStaticEntityFromArray
         ret
 
 ENDP inflictDamageToStaticEntityFromArray
+
+PROC calculateMemberGridOffset
+    ARG @@x:BYTE, @@y:BYTE, @@memberIndex:BYTE RETURNS eax
+    USES ebx, ecx, edx
+
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call calculateEntityGridOffset, eax, ebx, offset grid ;Calculate Entity offset
+
+    movzx ecx, [@@memberIndex] 
+    add eax, ecx            ; add memberindex to entity offset to get member offset
+
+    ret
+ENDP calculateMemberGridOffset
+
+PROC calculateEntityGridOffset
+    ARG @@x:BYTE, @@y:BYTE, @@grid:DWORD RETURNS eax
+    USES ebx, ecx, esi
+
+    mov esi, [@@grid]       ; Load the grid offset into ESI
+    movzx eax, [@@y]        ; Load y coordinate into EAX
+    imul eax, COLUMNS       ; Multiply y by the number of columns
+    movzx ebx, [@@x]        ; Load x coordinate into EBX
+    add eax, ebx            ; Add x to the result
+    imul eax, ENTITY_SIZE   ; Multiply by the size of an entity
+    add eax, esi            ; Add the grid offset
+
+    ret
+ENDP calculateEntityGridOffset
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -1384,6 +1407,32 @@ PROC inflictDamageToStaticEntityFromGrid
 
 ENDP inflictDamageToStaticEntityFromGrid
 
+PROC decrementFireTimer
+    ARG @@x:BYTE, @@y:BYTE RETURNS al
+    USES ebx, ecx, edi
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call getValueOfStaticEntity, eax, ebx, 11
+    dec al
+
+    movzx ecx, [@@x]
+    movzx ebx, [@@y]
+    call updateStaticEntityWithValue, ecx, ebx, eax, 11
+    
+    ret
+ENDP decrementFireTimer
+
+PROC resetFireTimer
+    ARG @@x:BYTE, @@y:BYTE
+    USES eax, ebx, ecx, edi
+
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call updateStaticEntityWithValue, eax, ebx, FIRETIMER, 11
+
+    ret
+ENDP resetFireTimer
+
 ; **MOVEMENT**
 ; has to go from right to left, top to bottom otherwise the entities will move in the wrong order
 
@@ -1747,14 +1796,27 @@ PROC handleProjectileSpawning
         movzx eax, [@@x]
         movzx ebx, [@@y]
         call getStaticEntityType, eax, ebx
-        cmp al, 255
-        je invalid_entity_spawn_projectiles
-        cmp al, -1
-        je invalid_entity_spawn_projectiles
-        cmp al, 9
-        je invalid_entity_spawn_projectiles
+        call getMainType, eax 
+        
+        cmp al, 0
+        jne invalid_entity_spawn_projectiles
+
+        ; Decrement fireTimer
         movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call decrementFireTimer, eax, ebx
+        cmp al, 0
+        jne invalid_entity_spawn_projectiles
+
+        ; if fireTimer equals 0, spawn projectile
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
         call spawnProjectile, eax, ebx
+
+        ; Reset fireTimer
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call resetFireTimer, eax, ebx
 
         ret
 
@@ -1826,11 +1888,11 @@ PROC spawnDefaultZombie
         ; returns the index of the entity in eax
         mov bl, [@@x]
         mov cl, [@@y]
-        call updateDynamicEntityWithValues, ebx, ecx, eax, 10, 2, 1, 0, 0, 0, 0
+        call updateDynamicEntityWithValues, ebx, ecx, eax, 10, 2, 1, 0, 0, 0, 0, 20, 20
 
         ret
 
-ENDP spawnDefaultZombie
+ENDP spawnDefaultZombie     
 
 ; function to spawn plant at a given position
 PROC spawnDefaultPlant
@@ -1842,7 +1904,7 @@ PROC spawnDefaultPlant
         movzx eax, [@@x]
         movzx ebx, [@@y]
         call initializeStaticEntity, eax, ebx, 0
-        call updateStaticEntityWithValues, eax, ebx, 5, 3, 1, 0, 0, 0, 0
+        call updateStaticEntityWithValues, eax, ebx, 5, 3, 1, 0, 0, FIREINTERVAL, FIRETIMER
 
         ret
 
@@ -1879,7 +1941,7 @@ PROC updateGameState
             push ecx ; put the row back
             mov ecx, eax ; restore ecx
             mov [@@currentY], bl
-            call handleMovement, ecx, ebx 
+            call handleMovement, ecx, ebx ; gets x, y arguments
             ; returns how many cells to skip in eax, to prevent double movement
             ; returns the type of the entity in ebx
             sub ecx, eax
@@ -1894,7 +1956,7 @@ PROC updateGameState
             cmp ecx, 0
             je after_inner_loop_update_game_state
             dec ecx
-            jmp inner_loop_update_game_state
+            jmp inner_loop_update_game_state ; continue iterating if not at the end of a row
 
         spawn_the_projectile_on_position:
             movzx ebx, [@@currentY]
@@ -2048,7 +2110,7 @@ PROC drawStaticEntitiesOnGrid
         push ecx
         movzx ecx, [@@type]
         
-        call drawEntity, eax, ebx, 9
+        call drawEntity, eax, ebx, 0
         pop ecx
         jmp after_draw_entity
     
@@ -2092,8 +2154,8 @@ PROC drawEntity
         movzx eax, [@@type] ; TODO make switch case
         cmp al, 0
         je draw_plant
-        cmp al, 9
-        je draw_plant
+        ; cmp al, 9
+        ; je draw_plant
         cmp al, 10
         je draw_zombie
         cmp al, 20
@@ -2328,7 +2390,7 @@ PROC renderFrame
     call fillBackgroundFaster, 93 ; fill the screen with white
     call drawBackground ; draw the grid
     call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
-    call drawStaticEntitiesOnGrid, 9, offset grid ; draw the plants
+    call drawStaticEntitiesOnGrid, 11, offset grid ; draw the plants
     call drawDynamicEntitiesOnGrid, 0, offset dynamic_grid ; draw the zombies and projectiles 
     call ShowCursor ; show the mouse cursor on the screen
 
@@ -2592,15 +2654,14 @@ PROC main
     call spawnDefaultZombie, 8, 0
     call spawnDefaultZombie, 8, 1
     call spawnDefaultZombie, 8, 2
-    call spawnDefaultZombie, 8, 3
-    call spawnDefaultZombie, 8, 4
+    ; call spawnDefaultZombie, 8, 3
+    ; call spawnDefaultZombie, 8, 4
 
-    ;call spawnDefaultPlant, 0, 0
-   ; call spawnDefaultPlant, 0, 1
+    call spawnDefaultPlant, 0, 0
+    call spawnDefaultPlant, 0, 1
     call spawnDefaultPlant, 0, 2
-    call spawnDefaultPlant, 0, 3
-    call spawnDefaultPlant, 0, 4
-
+    ; call spawnDefaultPlant, 0, 3
+    ; call spawnDefaultPlant, 0, 4
     ; Main game loop
 @@gameLoop:
     ; Process other game logic
@@ -2634,6 +2695,8 @@ DATASEG
         animationFrame db ?
         animationTimer db ?
         spriteIndex db ?
+        fireInterval db ?  
+        fireTimer db ?
     ENDS ENTITY
 
 	palette		db 768 dup (?) ; 256 colors * 3 bytes per color
