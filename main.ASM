@@ -21,6 +21,9 @@ ROWS EQU 5 		; number of rows
 COLUMNS EQU 9		; number of columns
 BMP_HEADER_SIZE equ 54
 
+TILE_WIDTH EQU 30
+TILE_HEIGHT EQU 40
+SHOP_WIDTH EQU 50 
 FIRETIMER EQU 25
 FIREINTERVAL EQU 100
 ENTITY_SIZE EQU 12
@@ -54,6 +57,54 @@ PROC convertXtoPixelPosition
 
 ENDP convertXtoPixelPosition
 
+; Function to convert screen coordinates to grid coordinates
+PROC convertScreenCoordsToGridCoords
+    ARG @@posX:DWORD, @@posY:DWORD RETURNS eax, ebx ; eax = gridX, ebx = gridY
+    USES ecx, edx
+
+    ; Calculate gridY = posY / TILE_HEIGHT
+    mov eax, [@@posY]
+    xor edx, edx
+    mov ecx, TILE_HEIGHT
+    div ecx
+
+    cmp eax, ROWS
+    jge gridY_out_of_bounds
+    mov ebx, eax ; gridY = eax
+
+    ; Check if posX is within the field
+    mov eax, [@@posX]
+    cmp eax, SHOP_WIDTH
+    jl position_in_shop_area
+
+    sub eax, SHOP_WIDTH ; adjustedX = posX - SHOP_WIDTH
+
+    xor edx, edx
+    mov ecx, TILE_WIDTH
+    div ecx
+
+    cmp eax, COLUMNS
+    jge gridX_out_of_bounds
+
+    ; gridX is in eax, gridY in ebx
+    ret
+
+position_in_shop_area:
+    mov eax, -1
+    mov ebx, -1
+    ret
+
+gridX_out_of_bounds:
+    mov eax, -1
+    mov ebx, -1
+    ret
+
+gridY_out_of_bounds:
+    mov eax, -1
+    mov ebx, -1
+    ret
+
+ENDP convertScreenCoordsToGridCoords
 ; function to check if x is on the boundary of the next cell
 PROC checkIfXIsOnBoundary
         ARG @@x:BYTE RETURNS eax, ebx ; eax is the x, ebx is whether it passed the boundary
@@ -1274,6 +1325,36 @@ PROC moveEntityLeft
 
 ENDP moveEntityLeft
 
+; Function to check if a position is free to spawn an entity
+PROC isPositionFree
+    ARG @@x:BYTE, @@y:BYTE RETURNS eax
+    USES ebx, ecx, edx, esi
+
+    ; Check the dynamic grid
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call getEntityType, eax, ebx, offset dynamic_grid
+    cmp al, -1
+    jne isPositionFree_position_not_free
+
+    ; Check the static grid
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call getStaticEntityType, eax, ebx
+    cmp al, -1
+    jne isPositionFree_position_not_free
+
+    ; Position is free
+    mov eax, 1
+    ret
+
+isPositionFree_position_not_free:
+    ; Position is not free
+    mov eax, 0
+    ret
+
+ENDP isPositionFree
+
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
 ; Game logic
@@ -1879,7 +1960,12 @@ ENDP spawnPotato
 PROC spawnDefaultZombie
     ARG @@x:BYTE, @@y:BYTE
     USES eax, ebx, ecx, edx, edi, esi
-
+        ; Check if the position is free
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call isPositionFree, eax, ebx
+        cmp eax, 0
+        je spawnDefaultZombie_position_not_free
         ; spawn a zombie at the given position with default values
 
         movzx eax, [@@x]
@@ -1890,6 +1976,8 @@ PROC spawnDefaultZombie
         mov cl, [@@y]
         call updateDynamicEntityWithValues, ebx, ecx, eax, 10, 2, 1, 0, 0, 0, 0, 20, 20
 
+        ret
+    spawnDefaultZombie_position_not_free:
         ret
 
 ENDP spawnDefaultZombie     
@@ -2535,7 +2623,8 @@ PROC handleMouseClick
     ; De status van de knoppen staat in bx
     test bx, 1       ; Linker muisknop ingedrukt?
     jz no_click
-    
+    call convertScreenCoordsToGridCoords, ecx, edx
+    call spawnDefaultZombie, eax, ebx
 
 
     call printMouseCoordinates, [mouseX], [mouseY]
