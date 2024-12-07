@@ -24,10 +24,10 @@ BMP_HEADER_SIZE equ 54
 TILE_WIDTH EQU 30
 TILE_HEIGHT EQU 40
 SHOP_WIDTH EQU 50 
-NUM_REGIONS EQU 2
+NUM_REGIONS EQU 6
 ; REGION_SIZE EQU 10
 FIRETIMER EQU 25
-FIREINTERVAL EQU 100
+FIREINTERVAL EQU 100s
 ENTITY_SIZE EQU 12
 ENTITY_BIAS EQU 11
 MAX_ENTITIES EQU 100
@@ -481,9 +481,42 @@ PROC updateCell
 
 ENDP updateCell
 
+; Function to initialize a region with all necessary fields
+PROC initializeRegion
+    ARG @@regionIndex:BYTE, @@x_min:WORD, @@x_max:WORD, @@y_min:WORD, @@y_max:WORD, @@region_type:BYTE, @@sub_type:BYTE
+    USES eax, ebx, ecx, edx, esi, edi
+
+    ; Initialize x_min
+    movzx eax, [@@regionIndex]
+    movzx ebx, [@@x_min]
+    call updateRegionCell, eax, REGION_x_min, ebx, 2
+
+    ; Initialize x_max
+    movzx ebx, [@@x_max]
+    call updateRegionCell, eax, REGION_x_max, ebx, 2
+
+    ; Initialize y_min
+    movzx ebx, [@@y_min]
+    call updateRegionCell, eax, REGION_y_min, ebx, 2
+
+    ; Initialize y_max
+    movzx ebx, [@@y_max]
+    call updateRegionCell, eax, REGION_y_max, ebx, 2
+
+    ; Initialize region_type
+    movzx ebx, [@@region_type]
+    call updateRegionCell, eax, REGION_region_type, ebx, 1
+
+    ; Initialize sub_type
+    movzx ebx, [@@sub_type]
+    call updateRegionCell, eax, REGION_sub_type, ebx, 1
+
+    ret
+ENDP initializeRegion
+
 ; Function to update a cell in a REGION struct
 PROC updateRegionCell
-    ARG @@regionIndex:BYTE, @@fieldOffset:BYTE, @@value:WORD, @@size:BYTE
+    ARG @@regionIndex:BYTE, @@fieldOffset:BYTE, @@value:BYTE, @@size:BYTE
     USES eax, ebx, ecx, edx, esi, edi
 
         ; Calculate the address of the region field
@@ -2522,6 +2555,7 @@ PROC renderFrame
     call fillBackgroundFaster, 93 ; fill the screen with white
     call drawBackground ; draw the grid
     call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
+    call drawShopInterface
     call drawStaticEntitiesOnGrid, 11, offset grid ; draw the plants
     call drawDynamicEntitiesOnGrid, 0, offset dynamic_grid ; draw the zombies and projectiles 
     call ShowCursor ; show the mouse cursor on the screen
@@ -2909,6 +2943,98 @@ PROC ShopReset
 
 ENDP ShopReset
 
+PROC drawShopInterface
+    USES eax, ebx, ecx, edx, esi, edi, ebp
+
+    mov esi, offset regions
+    mov ecx, NUM_REGIONS
+
+draw_shop_loop:
+    cmp ecx, 0
+    je done_shop
+
+    ; Check if this is a shop region (region_type = 1)
+    mov al, [esi + REGION.region_type]
+    cmp al, 1
+    jne not_shop_region
+
+    ; Read coordinates of the region
+    movzx eax, [esi + REGION.x_min]  ; eax = x_min
+    movzx edx, [esi + REGION.x_max]  ; edx = x_max
+    movzx ebx, [esi + REGION.y_min]  ; ebx = y_min
+    movzx edi, [esi + REGION.y_max]  ; edi = y_max
+
+    ; Width = x_max - x_min + 1
+    sub edx, eax
+    inc edx
+    ; Height = y_max - y_min + 1
+    sub edi, ebx
+    inc edi
+
+    ; Read the sub_type to determine which item (zombie/plant/...)
+    movzx ebp, [esi + REGION.sub_type]  ; ebp = sub_type
+    
+    cmp ebp, 10 ; subtype 10 for zombie
+    je zombie_button
+
+    cmp ebp, 00 ; subtype 00 for plant
+    je plant_button
+
+    jmp not_shop_region
+
+zombie_button:
+    mov ecx, 7  ; gray tint
+    jmp draw_button
+
+plant_button:
+    mov ecx, 2  ; green tint 
+    jmp draw_button
+
+draw_button:
+    ; Draw the base button
+    push ecx ; Save color value
+    call drawColoredRectangle, eax, ebx, edx, edi, ecx
+    pop ecx ; Restore color value
+
+    ; Check ebp to determine what to draw
+    cmp ebp, 10          ; sub_type = 10 => zombie
+    je draw_zombie_on_button
+    cmp ebp, 0           ; sub_type = 0 => plant
+    je draw_plant_on_button
+    jmp after_entity_draw
+
+draw_zombie_on_button:
+    call drawZombie, eax, ebx
+    jmp after_entity_draw
+
+draw_plant_on_button:
+    call drawPlant, eax, ebx
+    jmp after_entity_draw
+
+after_entity_draw:
+    
+ ; Check if this is the selected button
+    push ecx
+    movzx ecx, [selected_shop]
+    cmp ebp, ecx
+    pop ecx
+    jne not_shop_region
+
+    ; If selected, draw a white border
+    mov ecx, 15                   ; Color for border
+    push ecx
+    call drawRectangle, eax, ebx, edx, edi, ecx
+    pop ecx
+
+not_shop_region:
+    
+    add esi, REGION_SIZE
+    dec ecx
+    jmp draw_shop_loop
+
+done_shop:
+    ret
+ENDP drawShopInterface
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
 PROC main
@@ -2936,21 +3062,14 @@ PROC main
     ; Initialize first region (regionIndex = 0) 
     ;updateRegionCell args: regionIndex, fieldOffset, value, size
 
-    call updateRegionCell, 0, REGION_x_min, 0, 2          ; x_min = 0
-    call updateRegionCell, 0, REGION_x_max, 49, 2         ; x_max = 49
-    call updateRegionCell, 0, REGION_y_min, 149, 2        ; y_min = 149
-    call updateRegionCell, 0, REGION_y_max, 199, 2        ; y_max = 199
-    call updateRegionCell, 0, REGION_region_type, 1, 1    ; region_type = 1 (shop region)
-    call updateRegionCell, 0, REGION_sub_type, 10, 1      ; sub_type = 10 (zombie)
-
-    ; Initialize second region (regionIndex = 1)
-    call updateRegionCell, 1, REGION_x_min, 0, 2         ; x_min = 50
-    call updateRegionCell, 1, REGION_x_max, 49, 2        ; x_max = 100
-    call updateRegionCell, 1, REGION_y_min, 99, 2          ; y_min = 0
-    call updateRegionCell, 1, REGION_y_max, 148, 2         ; y_max = 50
-    call updateRegionCell, 1, REGION_region_type, 1, 1    ; region_type = 1 (shop region)
-    call updateRegionCell, 1, REGION_sub_type, 00, 1      ; sub_type = 20 (plant)
-
+    call initializeRegion, 5, 0, 24, 40, 79, 1, 50
+    call initializeRegion, 1, 0, 24, 80, 119, 1, 00
+    call initializeRegion, 2, 0, 24, 120, 159, 1, 20
+    call initializeRegion, 3, 24, 49, 40, 79, 1, 30
+    call initializeRegion, 4, 24, 49, 80, 119, 1, 40
+    call initializeRegion, 0, 24, 49, 120, 159, 1, 10
+    
+    
     push eax 
     movzx eax, [selected_shop]
 
