@@ -24,6 +24,8 @@ BMP_HEADER_SIZE equ 54
 TILE_WIDTH EQU 30
 TILE_HEIGHT EQU 40
 SHOP_WIDTH EQU 50 
+NUM_REGIONS EQU 2
+; REGION_SIZE EQU 10
 FIRETIMER EQU 25
 FIREINTERVAL EQU 100
 ENTITY_SIZE EQU 12
@@ -90,18 +92,18 @@ PROC convertScreenCoordsToGridCoords
     ret
 
 position_in_shop_area:
-    mov eax, -1
-    mov ebx, -1
+    mov eax, 255
+    mov ebx, 255
     ret
 
 gridX_out_of_bounds:
-    mov eax, -1
-    mov ebx, -1
+    mov eax, 255
+    mov ebx, 255
     ret
 
 gridY_out_of_bounds:
-    mov eax, -1
-    mov ebx, -1
+    mov eax, 255
+    mov ebx, 255
     ret
 
 ENDP convertScreenCoordsToGridCoords
@@ -478,6 +480,42 @@ PROC updateCell
     ret
 
 ENDP updateCell
+
+; Function to update a cell in a REGION struct
+PROC updateRegionCell
+    ARG @@regionIndex:BYTE, @@fieldOffset:BYTE, @@value:WORD, @@size:BYTE
+    USES eax, ebx, ecx, edx, esi, edi
+
+        ; Calculate the address of the region field
+        mov esi, offset regions          ; Base address of regions array
+        movzx eax, [@@regionIndex]       ; Region index
+        imul eax, REGION_SIZE            ; Multiply by size of REGION struct
+        add esi, eax                     ; Move to the specific REGION struct
+
+        movzx ebx, [@@fieldOffset]       ; Field offset within the REGION struct
+        add esi, ebx                     ; Move to the specific field
+
+        ; Store the value at the address
+        movzx eax, [@@value]             ; Value to store
+        movzx ecx, [@@size]              ; Size of the field (1 for BYTE, 2 for WORD)
+        cmp ecx, 1
+        je store_byte
+        cmp ecx, 2
+        je store_word
+        jmp end_updateRegionCell         ; If size is neither 1 nor 2, exit
+
+    store_byte:
+        mov [esi], al
+        jmp end_updateRegionCell
+
+    store_word:
+        mov [esi], ax
+        jmp end_updateRegionCell
+
+    end_updateRegionCell:
+        ret
+ENDP updateRegionCell
+
 
 ; function that displays state of an entity in the grid
 PROC printStaticEntityState
@@ -1496,6 +1534,9 @@ PROC decrementFireTimer
     call getValueOfStaticEntity, eax, ebx, 11
     dec al
 
+    ; Print the updated fireTimer value for debugging
+    ; call printDecimal, eax
+
     movzx ecx, [@@x]
     movzx ebx, [@@y]
     call updateStaticEntityWithValue, ecx, ebx, eax, 11
@@ -1653,7 +1694,7 @@ PROC handleProjectileMovement
             movzx eax, [@@x]
             inc eax
             call inflictDamageToDynamicEntityFromGrid, eax, ebx, ecx ; TODO: damage should be a variable
-            jmp remove_projectile_movement
+            
 
         remove_projectile_movement:
             mov al, [@@x]
@@ -1887,7 +1928,7 @@ PROC handleProjectileSpawning
         movzx ebx, [@@y]
         call decrementFireTimer, eax, ebx
         cmp al, 0
-        jne invalid_entity_spawn_projectiles
+        jge invalid_entity_spawn_projectiles
 
         ; if fireTimer equals 0, spawn projectile
         movzx eax, [@@x]
@@ -1951,7 +1992,7 @@ ARG @@x:BYTE, @@y:BYTE
         movzx eax, [@@x]
         movzx ebx, [@@y]
         call initializeStaticEntity, eax, ebx, 9
-        call updateStaticEntityWithValues, eax, ebx, 10, 0, 1, 0, 0, 0, 0 ; a potato does not have damage, means that it can not spawn a projectile
+        call updateStaticEntityWithValues, eax, ebx, 8, 0, 1, 0, 0, 0, 0 ; a potato does not have damage, means that it can not spawn a projectile
 
         ret
 ENDP spawnPotato
@@ -1991,8 +2032,11 @@ PROC spawnDefaultPlant
 
         movzx eax, [@@x]
         movzx ebx, [@@y]
+        ; call printMouseCoordinates, eax, ebx
+
         call initializeStaticEntity, eax, ebx, 0
-        call updateStaticEntityWithValues, eax, ebx, 5, 3, 1, 0, 0, FIREINTERVAL, FIRETIMER
+        call updateStaticEntityWithValues, eax, ebx, 100, 3, 1, 0, 0, FIREINTERVAL, FIRETIMER
+        
 
         ret
 
@@ -2052,7 +2096,7 @@ PROC updateGameState
             jmp after_checking_local
 
         set_spawn_projectile:
-            ;call printDecimal, 99
+            ; call printDecimal, 99
             mov [@@SpawnProjectile], 1 ; set @@SpawnProjectile to 1
             jmp after_checking_local
 
@@ -2482,6 +2526,9 @@ PROC renderFrame
     call drawDynamicEntitiesOnGrid, 0, offset dynamic_grid ; draw the zombies and projectiles 
     call ShowCursor ; show the mouse cursor on the screen
 
+    movzx eax, [selected_shop]
+    call printDecimalWithoutNewLine, eax
+
     ret
 
 ENDP renderFrame
@@ -2613,21 +2660,29 @@ PROC handleMouseClick
     USES eax, ebx, ecx, edx
     xor ecx, ecx
     xor edx, edx
-    ; Controleer de status van de muisknoppen
+    ; Check the status of the mouse buttons
     mov ax, 3
     int 33h
 
     sar cx, 1			; horizontal cursor position is doubled in input 
     mov [mouseX], ecx
     mov [mouseY], edx
-    ; De status van de knoppen staat in bx
-    test bx, 1       ; Linker muisknop ingedrukt?
+    
+        ; The status of the buttons is in bx
+    test bx, 1       ; Left mous button clicked? 
     jz no_click
-    call convertScreenCoordsToGridCoords, ecx, edx
-    call spawnDefaultZombie, eax, ebx
+    ; call printMouseCoordinates, [mouseX], [mouseY]
 
+    call convertScreenCoordsToGridCoords, ecx, edx ;returns 255 if screenscoords out of bound
+    
+    cmp eax, 255
+    jne call_SpawnSolver
+    call RegionSolver, ecx, edx
+    ret
 
-    call printMouseCoordinates, [mouseX], [mouseY]
+call_SpawnSolver:
+    call SpawnSolver, eax, ebx
+    ret
 
 no_click:
     ret
@@ -2716,6 +2771,146 @@ ENDP setMouseLimits
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
+; Interface functions
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+; Calls the correct solver (shop/menu/...) based on region coordinates
+PROC RegionSolver
+    ARG @@mouseX:WORD, @@mouseY:WORD
+    USES eax, ebx, ecx, edx, esi, edi
+
+    mov esi, offset regions      ; Start address of the regions
+    mov ecx, NUM_REGIONS         ; Number of regions to iterate through
+
+check_next_region:
+    cmp ecx, 0
+    je short RegionSolver_no_region_found           ; No region found
+
+    ; Check if mouseX is within x_min and x_max
+    mov ax, [esi + REGION.x_min]
+    cmp [@@mouseX], ax
+    jl skip_to_next
+
+    mov ax, [esi + REGION.x_max]
+    cmp [@@mouseX], ax
+    jg skip_to_next
+
+    ; Check if mouseY is within y_min and y_max
+    mov ax, [esi + REGION.y_min]
+    cmp [@@mouseY], ax
+    jl skip_to_next
+
+    mov ax, [esi + REGION.y_max]
+    cmp [@@mouseY], ax
+    jg skip_to_next
+
+    ; Region found, determine action based on region_type
+    mov al, [esi + REGION.region_type]
+    cmp al, 0
+    je call_MenuSolver
+    cmp al, 1
+    je call_ShopSolver
+
+    jmp end_RegionSolver
+
+call_MenuSolver:
+    call MenuSolver
+    jmp end_RegionSolver
+
+call_ShopSolver:
+    call ShopSolver
+    jmp end_RegionSolver
+
+skip_to_next:
+    add esi, REGION_SIZE      ; Go to the next region
+    dec ecx
+    jmp check_next_region
+
+RegionSolver_no_region_found:
+    ; No region found; optionally perform a default action
+    jmp end_RegionSolver
+
+end_RegionSolver:
+    ret
+ENDP RegionSolver
+
+PROC ShopSolver
+    USES eax, esi
+
+    ; Set selected_shop to sub_type of the selected region
+    mov al, [esi + REGION.sub_type]
+    mov [selected_shop], al
+    movzx eax, al 
+    call printDecimalWithoutNewLine, eax
+    ret
+    
+ENDP ShopSolver
+
+PROC MenuSolver
+    ret
+ENDP MenuSolver 
+
+
+; Procedure to decide which spawn function to call based on selected_shop value
+PROC SpawnSolver
+    ARG @@coordX:WORD, @@coordY:WORD
+    USES eax, ebx, ecx, edx
+    
+    ; Currently only spawning based on mainType, possible to extend to subType with switch cases
+    mov al, [selected_shop]
+    movzx eax, al
+    call getMainType, eax
+
+    cmp eax, -1
+    je SpawnSolver_end
+
+    cmp eax, 0
+    je SpawnPlant
+    
+    cmp eax, 1
+    je SpawnZombie
+    
+
+    ; If selected_shop has other values, do nothing
+    jmp SpawnSolver_end
+
+SpawnPlant:
+    ; Spawn a plant at grid coordinates (@@coordX, @@coordY)
+    movzx eax, [@@coordX]    ; Load coordX into EAX
+    movzx ebx, [@@coordY]    ; Load coordY into EBX
+    call printMouseCoordinates, eax, ebx
+    call spawnDefaultPlant, eax, ebx
+    ; call ShopReset
+
+    jmp SpawnSolver_end
+
+SpawnZombie:
+    ; Spawn a zombie at grid coordinates (@@coordX, @@coordY)
+    movzx eax, [@@coordX]    ; Load coordX into EAX
+    movzx ebx, [@@coordY]    ; Load coordY into EBX
+    call printMouseCoordinates, eax, ebx
+
+    call spawnDefaultZombie, eax, ebx
+    ; call ShopReset
+
+    jmp SpawnSolver_end
+
+SpawnSolver_end:
+    ret
+ENDP SpawnSolver
+    
+; resets selected_shop to 255 
+PROC ShopReset
+    USES eax
+
+    mov al, -1
+    mov [selected_shop], al
+    ret
+
+ENDP ShopReset
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+
 PROC main
     sti                 ; Enable interrupts
     cld                 ; Clear direction flag
@@ -2738,19 +2933,43 @@ PROC main
     call    setVideoMode, 13h
     call    mouse_install, offset mouseHandler
 
+    ; Initialize first region (regionIndex = 0) 
+    ;updateRegionCell args: regionIndex, fieldOffset, value, size
 
+    call updateRegionCell, 0, REGION_x_min, 0, 2          ; x_min = 0
+    call updateRegionCell, 0, REGION_x_max, 49, 2         ; x_max = 49
+    call updateRegionCell, 0, REGION_y_min, 149, 2        ; y_min = 149
+    call updateRegionCell, 0, REGION_y_max, 199, 2        ; y_max = 199
+    call updateRegionCell, 0, REGION_region_type, 1, 1    ; region_type = 1 (shop region)
+    call updateRegionCell, 0, REGION_sub_type, 10, 1      ; sub_type = 10 (zombie)
+
+    ; Initialize second region (regionIndex = 1)
+    call updateRegionCell, 1, REGION_x_min, 0, 2         ; x_min = 50
+    call updateRegionCell, 1, REGION_x_max, 49, 2        ; x_max = 100
+    call updateRegionCell, 1, REGION_y_min, 99, 2          ; y_min = 0
+    call updateRegionCell, 1, REGION_y_max, 148, 2         ; y_max = 50
+    call updateRegionCell, 1, REGION_region_type, 1, 1    ; region_type = 1 (shop region)
+    call updateRegionCell, 1, REGION_sub_type, 00, 1      ; sub_type = 20 (plant)
+
+    push eax 
+    movzx eax, [selected_shop]
+
+    ; call printDecimal, eax
+
+    pop eax
+    
     ; Spawn entities
     call spawnDefaultZombie, 8, 0
     call spawnDefaultZombie, 8, 1
     call spawnDefaultZombie, 8, 2
-    ; call spawnDefaultZombie, 8, 3
-    ; call spawnDefaultZombie, 8, 4
+    call spawnDefaultZombie, 8, 3
+    call spawnDefaultZombie, 8, 4
 
     call spawnDefaultPlant, 0, 0
     call spawnDefaultPlant, 0, 1
     call spawnDefaultPlant, 0, 2
-    ; call spawnDefaultPlant, 0, 3
-    ; call spawnDefaultPlant, 0, 4
+    call spawnDefaultPlant, 0, 3
+    call spawnDefaultPlant, 0, 4
     ; Main game loop
 @@gameLoop:
     ; Process other game logic
@@ -2763,7 +2982,7 @@ PROC main
     call renderFrame
     
     call getXOfDynamicEntity, 0
-    call printDecimalWithoutNewLine, eax
+    
 
     ; Check for ESC key to exit
     call    checkForSpecificKeystroke, 001Bh
@@ -2788,8 +3007,18 @@ DATASEG
         fireTimer db ?
     ENDS ENTITY
 
+    STRUC REGION
+        x_min   DW ?
+        x_max   DW ?
+        y_min   DW ?
+        y_max   DW ?
+        region_type    DB ?
+        sub_type DB ?
+    ENDS REGION
+
 	palette		db 768 dup (?) ; 256 colors * 3 bytes per color
     grid        ENTITY 100 dup (<>)  ; 5 rows * 20 columns
+    regions     REGION 20 dup (<>) ;make space for max 20 regions
 
     dynamic_grid db 100 dup (-1) ; 5 rows * 20 columns
     dynamic_entities_array ENTITY 100 dup (<>) ; make space for 100 entities
@@ -2814,6 +3043,15 @@ DATASEG
     
     mouseX  dd 0
     mouseY  dd 0
+
+    selected_shop db -1
+    REGION_x_min       EQU 0
+    REGION_x_max       EQU 2
+    REGION_y_min       EQU 4
+    REGION_y_max       EQU 6
+    REGION_region_type EQU 8
+    REGION_sub_type    EQU 9
+    REGION_SIZE        EQU 10  ; Total size of REGION struct
     ; Template entity structure
     ; Structure of an entity:
     ; - 1 byte: type of entity (0 for plant, 1 for zombie, 2 for projectile, 3 for sun, 4 for lawn mower)
