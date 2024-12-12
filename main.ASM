@@ -18,22 +18,143 @@ VMEMADR EQU 0A0000h	; video memory address
 SCRWIDTH EQU 320	; screen witdth
 SCRHEIGHT EQU 200	; screen height
 ROWS EQU 5 		; number of rows
-COLUMNS EQU 9		; number of columns
+COLUMNS EQU 10		; number of columns
+VISIBLE_COLUMNS EQU 9 ; number of columns that are visible
 BMP_HEADER_SIZE equ 54
+
+SPRITEWIDTH EQU 30
+SPRITEHEIGHT EQU 40
+DATASIZE EQU SPRITEWIDTH*SPRITEHEIGHT;bytes of data in file
 
 TILE_WIDTH EQU 30
 TILE_HEIGHT EQU 40
 SHOP_WIDTH EQU 50 
 NUM_REGIONS EQU 6
-; REGION_SIZE EQU 10
+
 FIRETIMER EQU 25
-FIREINTERVAL EQU 100s
+FIREINTERVAL EQU 100        
 ENTITY_SIZE EQU 12
 ENTITY_BIAS EQU 11
 MAX_ENTITIES EQU 100
+SPAWN_INTERVAL EQU 100
+LEVELS_COUNT EQU 8
 
-; --------------------------------------------------------d-----------
+SB_BASE equ 220h
+SB_IRQ equ 7
+SB_DMA equ 1
+INT_NUMBER equ 0fh
+SND_BUFF_SIZE EQU 8192
+LOOPING_AUDIO_LENGTH EQU 52
+
+RAND_A = 1103515245
+RAND_C = 12345
+
+UDATASEG
+    rand_seed   dd ?
+
+    buffer_start dd ?
+	sound_buffer db 2 * SND_BUFF_SIZE dup (?) ; sound data buffer
+	
+	sndhandle dw ?
+
+; -------------------------------------------------------------------
 CODESEG
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+; RAND.ASM
+
+
+;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+; Initialize the random number generator.
+;
+; ARGUMENTS:
+;   none
+; RETURNS:
+;   nothing
+;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+PROC rand_init
+    USES    eax, ecx, edx
+
+    mov     ah, 02ch        ; Get system time
+    int     21h
+
+    mov     ax, dx          ; Use time to generate seed in EAX
+    shl     eax, 16
+    mov     ax, cx
+
+    mov     ah, 02ah        ; Get system date
+    int     21h
+
+    shl     ecx, 16         ; Mangle date into the seed in EAX
+    mov     cx, dx
+    xor     eax, ecx
+    
+    mov     [rand_seed], eax
+
+    ret
+ENDP rand_init
+
+;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+; Returns the next (pseudo) random number in EAX.
+;
+; ARGUMENTS:
+;   none
+; RETURNS:
+;   EAX     Random 32-bit value
+;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+PROC rand
+    USES    ebx, ecx, edx
+
+    mov     eax, [rand_seed]
+    mov     ecx, RAND_A
+    mul     ecx
+    add     eax, RAND_C
+    mov		ebx, eax
+	shr		ebx, 16
+	
+	mul		ecx
+	add     eax, RAND_C
+	mov     [rand_seed], eax
+	mov		ax, bx
+
+    ret
+ENDP rand
+
+;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+; Returns the next (pseudo) random number in AX.
+;
+; ARGUMENTS:
+;   none
+; RETURNS:
+;   EAX     Random 16-bit value
+;+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+PROC rand16
+    USES    edx
+
+    mov     eax, [rand_seed]
+    mov     edx, RAND_A
+    mul     edx
+    add     eax, RAND_C
+    mov     [rand_seed], eax
+	shr		eax, 16
+	
+    ret
+ENDP rand16
+
+; function to generate a random number between 0 and 4
+PROC rand5
+    ARG RETURNS eax
+    USES    ebx, edx
+
+    call rand16
+    mov ebx, 5
+    xor edx, edx
+    div ebx
+    movzx eax, dx
+
+    ret
+
+ENDP rand5
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -178,6 +299,29 @@ PROC setElapsedTime
 
     ret
 ENDP setElapsedTime
+
+PROC checkAndResetTimer
+    USES eax, ebx, ecx, edx, esi, edi
+
+        ; Calculate the elapsed time
+        call setElapsedTime
+
+        ; Load the elapsed time into eax
+        mov eax, [elapsed_time]
+
+        ; Check if the elapsed time is equal to 52
+        cmp eax, LOOPING_AUDIO_LENGTH
+        jne continue
+
+        ; If equal to 52, reset the timer
+        call startTime
+        call stopMusic
+        call startMusic
+
+    continue:
+        ; Continue with the normal flow
+        ret
+ENDP checkAndResetTimer
     
 PROC printTimer
     USES eax, ebx, ecx, edx, esi, edi
@@ -274,12 +418,26 @@ ENDP waitForSpecificKeystroke
 ; Terminate the program.
 PROC terminateProcess
 	USES eax
+    call stopMusic
 	call setVideoMode, 03h
 	mov	ax,04C00h
 	int 21h
 
 	ret
 ENDP terminateProcess
+
+; function to print a string
+PROC printString
+    ARG @@string:PTR BYTE
+    USES eax, edx
+
+        mov edx, [@@string]
+        mov ah, 09h
+        int 21h
+
+        ret
+
+ENDP printString
 
 ; function to print a character
 PROC printChar
@@ -813,7 +971,8 @@ PROC getEntityType
             mov esi, [@@grid]
             movzx eax, [@@y]
             imul eax, COLUMNS
-            add al, [@@x]
+            movzx ebx, [@@x]
+            add eax, ebx
             add esi, eax
             xor eax, eax
             lodsb ; this gives the index of the entity in the dynamic_entities_array
@@ -1222,7 +1381,8 @@ PROC removeDynamicEntity
 
         movzx eax, [@@y]
         imul eax, COLUMNS
-        add al, [@@x]
+        movzx ebx, [@@x]
+        add eax, ebx
         mov esi, offset dynamic_grid
         add esi, eax
         lodsb
@@ -1233,11 +1393,13 @@ PROC removeDynamicEntity
         add edi, eax
         xor eax, eax
         mov al, -1
+        movzx eax, al
         stosb
 
         movzx eax, [@@y]
         imul eax, COLUMNS
-        add al, [@@x]
+        movzx ebx, [@@x]
+        add eax, ebx
         mov edi, offset dynamic_grid
         add edi, eax
         mov al, -1
@@ -1291,7 +1453,8 @@ PROC moveValue
         imul eax, COLUMNS
         movzx ecx, [@@bias]
         imul eax, ecx
-        add al, [@@x1]
+        movzx ebx, [@@x1]
+        add eax, ebx
         imul eax, ecx
         mov ebx, eax
         add esi, eax
@@ -1312,7 +1475,9 @@ PROC moveValue
         imul eax, COLUMNS
         movzx ecx, [@@bias]
         imul eax, ecx
-        add al, [@@x2]
+        movzx ebx, [@@x2]
+        add eax, ebx
+        
         imul eax, ecx
         add edi, eax
         xor eax, eax
@@ -1452,12 +1617,20 @@ PROC getEntityTypes
         je unknown_entity_get_types
         cmp al, 255
         je unknown_entity_get_types
+        cmp al, 10
+        jl plant_type
         mov cl, 10
         xor ah, ah
         div cl ; divide al by cl, result in al (mainType), remainder in ah (subType)
 
         movzx eax, al ; mainType in eax
         movzx ebx, ah ; subType in ebx
+        ret 
+
+    plant_type:
+        movzx ebx, al ; subType in ebx
+        xor eax, eax ; mainType in eax = 0 (plant)
+        
 
         ret
 
@@ -1508,8 +1681,10 @@ PROC inflictDamageToDynamicEntityFromGrid
 
             movzx eax, [@@y]
             imul eax, COLUMNS
-            add al, [@@x]
+            movzx ebx, [@@x]
+            add eax, ebx
             mov esi, offset dynamic_grid
+            
             add esi, eax
             lodsb
             movzx ebx, [@@damage]
@@ -1688,7 +1863,7 @@ PROC handleProjectileMovement
             ; check if last column
             inc al
             cmp al, COLUMNS
-            je remove_projectile_movement
+            je remove_projectile_movement 
         check_for_collision_type:
             ; check if collision with entity to the right
             mov al, [@@x]
@@ -1951,10 +2126,11 @@ PROC handleProjectileSpawning
         movzx eax, [@@x]
         movzx ebx, [@@y]
         call getStaticEntityType, eax, ebx
-        call getMainType, eax 
         
-        cmp al, 0
-        jne invalid_entity_spawn_projectiles
+        cmp al, 1
+        je invalid_entity_spawn_projectiles
+        cmp al, 2
+        je invalid_entity_spawn_projectiles
 
         ; Decrement fireTimer
         movzx eax, [@@x]
@@ -2015,23 +2191,27 @@ PROC spawnProjectile
 
 ENDP spawnProjectile
 
-; function to spawn potato at a given position
-PROC spawnPotato
-ARG @@x:BYTE, @@y:BYTE
+; function to spawn zombie at a given position
+PROC spawnDefaultZombie
+    ARG @@x:BYTE, @@y:BYTE
     USES eax, ebx, ecx, edx, edi, esi
 
-        ; spawn a plant at the given position with default values
+        ; spawn a zombie at the given position with default values
 
         movzx eax, [@@x]
         movzx ebx, [@@y]
-        call initializeStaticEntity, eax, ebx, 9
-        call updateStaticEntityWithValues, eax, ebx, 8, 0, 1, 0, 0, 0, 0 ; a potato does not have damage, means that it can not spawn a projectile
+        call initializeDynamicEntity, eax, ebx, 10
+        ; returns the index of the entity in eax
+        mov bl, [@@x]
+        mov cl, [@@y]
+        call updateDynamicEntityWithValues, ebx, ecx, eax, 8, 2, 1, 0, 0, 0, 0, 20, 20
 
         ret
-ENDP spawnPotato
+
+ENDP spawnDefaultZombie     
 
 ; function to spawn zombie at a given position
-PROC spawnDefaultZombie
+PROC spawnStrongZombie
     ARG @@x:BYTE, @@y:BYTE
     USES eax, ebx, ecx, edx, edi, esi
         ; Check if the position is free
@@ -2041,20 +2221,37 @@ PROC spawnDefaultZombie
         cmp eax, 0
         je spawnDefaultZombie_position_not_free
         ; spawn a zombie at the given position with default values
-
         movzx eax, [@@x]
         movzx ebx, [@@y]
-        call initializeDynamicEntity, eax, ebx, 10
+        call initializeDynamicEntity, eax, ebx, 11
         ; returns the index of the entity in eax
         mov bl, [@@x]
         mov cl, [@@y]
-        call updateDynamicEntityWithValues, ebx, ecx, eax, 10, 2, 1, 0, 0, 0, 0, 20, 20
+        call updateDynamicEntityWithValues, ebx, ecx, eax, 20, 3, 1, 0, 0, 0, 0, 20, 20
+
+        ret
+
+ENDP spawnStrongZombie 
+
+; function to spawn zombie at a given position
+PROC spawnLeapZombie
+    ARG @@x:BYTE, @@y:BYTE
+    USES eax, ebx, ecx, edx, edi, esi
+
+        ; spawn a zombie at the given position with default values
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call initializeDynamicEntity, eax, ebx, 12
+        ; returns the index of the entity in eax
+        mov bl, [@@x]
+        mov cl, [@@y]
+        call updateDynamicEntityWithValues, ebx, ecx, eax, 35, 4, 1, 0, 0, 0, 0, 20, 20
 
         ret
     spawnDefaultZombie_position_not_free:
         ret
 
-ENDP spawnDefaultZombie     
+ENDP spawnLeapZombie 
 
 ; function to spawn plant at a given position
 PROC spawnDefaultPlant
@@ -2074,6 +2271,66 @@ PROC spawnDefaultPlant
         ret
 
 ENDP spawnDefaultPlant
+
+; function to spawn potato at a given position
+PROC spawnPotato
+ARG @@x:BYTE, @@y:BYTE
+    USES eax, ebx, ecx, edx, edi, esi
+
+        ; spawn a plant at the given position with default values
+
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call initializeStaticEntity, eax, ebx, 1
+        call updateStaticEntityWithValues, eax, ebx, 154, 0, 0, 0, 0, 0, 0 ; a potato does not have damage, means that it can not spawn a projectile
+
+        ret
+ENDP spawnPotato
+
+; function to spawn potato at a given position
+PROC spawnBiggerPotato
+ARG @@x:BYTE, @@y:BYTE
+    USES eax, ebx, ecx, edx, edi, esi
+
+        ; spawn a plant at the given position with default values
+
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call initializeStaticEntity, eax, ebx, 2
+        call updateStaticEntityWithValues, eax, ebx, 254, 0, 0, 0, 0, 0, 0 ; a potato does not have damage, means that it can not spawn a projectile
+
+        ret
+ENDP spawnBiggerPotato
+
+PROC spawnBiggerPlant
+    ARG @@x:BYTE, @@y:BYTE
+    USES eax, ebx, ecx, edx, edi, esi
+
+        ; spawn a plant at the given position with default values
+
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call initializeStaticEntity, eax, ebx, 3
+        call updateStaticEntityWithValues, eax, ebx, 5, 3, 1, 0, 0, FIREINTERVAL, FIRETIMER
+
+        ret
+
+ENDP spawnBiggerPlant
+
+PROC spawnBiggestPlant
+    ARG @@x:BYTE, @@y:BYTE
+    USES eax, ebx, ecx, edx, edi, esi
+
+        ; spawn a plant at the given position with default values
+
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        call initializeStaticEntity, eax, ebx, 4
+        call updateStaticEntityWithValues, eax, ebx, 5, 3, 1, 0, 0, FIREINTERVAL, FIRETIMER
+
+        ret
+
+ENDP spawnBiggestPlant
 
 ; ** MAIN ALGORITHM **
 
@@ -2177,7 +2434,7 @@ PROC drawDynamicEntitiesOnGrid
 
     mov esi, [@@grid]               ; Set ESI to point to the grid array
     mov ecx, ROWS
-    mov edx, COLUMNS
+    mov edx, COLUMNS                      
 
     outer_loop_draw_entities:
         push ecx
@@ -2205,6 +2462,9 @@ PROC drawDynamicEntitiesOnGrid
         mov ecx, eax ; restore ecx
         mov eax, COLUMNS
         sub eax, ecx
+        ; if we are at the last column, skip the drawing, since we do not want to draw the entities that are out of the screen
+        cmp eax, 9 ; 9 is the last column, this one is not visible
+        je after_draw_dynamic_entity
         imul eax, 30
         add eax, 50
         push ecx
@@ -2252,9 +2512,10 @@ PROC drawStaticEntitiesOnGrid
         mov [@@type], al
         mov bl, [@@bias]
         add esi, ebx
-        cmp al, 0
-        je draw_plant_entity
-        ; ADD HERE further types of plants
+        cmp al, -1
+        je after_draw_entity
+        cmp al, 255
+        jne draw_plant_entity
         jmp after_draw_entity
 
     draw_plant_entity:
@@ -2275,7 +2536,7 @@ PROC drawStaticEntitiesOnGrid
         push ecx
         movzx ecx, [@@type]
         
-        call drawEntity, eax, ebx, 0
+        call drawEntity, eax, ebx, ecx
         pop ecx
         jmp after_draw_entity
     
@@ -2303,6 +2564,7 @@ PROC addXoffset
     mov bl, al
     mov al, [@@x]
     add al, bl
+    movzx eax, al
 
     ret
 
@@ -2319,10 +2581,20 @@ PROC drawEntity
         movzx eax, [@@type] ; TODO make switch case
         cmp al, 0
         je draw_plant
-        ; cmp al, 9
-        ; je draw_plant
+        cmp al, 1
+        je draw_potato
+        cmp al, 2
+        je draw_bigger_potato
+        cmp al, 3
+        je draw_bigger_plant
+        cmp al, 4
+        je draw_biggest_plant
         cmp al, 10
         je draw_zombie
+        cmp al, 11
+        je draw_strong_zombie
+        cmp al, 12
+        je draw_leap_zombie
         cmp al, 20
         je draw_projectile
         ret
@@ -2330,14 +2602,32 @@ PROC drawEntity
     draw_plant:
         movzx ebx, [@@x0]
         movzx ecx, [@@y0]
-        call drawPlant, ebx, ecx
+        ;call drawPlant, ebx, ecx
+        call drawSprite, offset sprite1, VMEMADR, ebx, ecx
         ret
     
     draw_zombie:
         movzx ebx, [@@x0]
         ;sub bl, [@@offset]
         movzx ecx, [@@y0]
-        call drawZombie, ebx, ecx
+        ;call drawZombie, ebx, ecx
+        call drawSprite, offset sprite3, VMEMADR, ebx, ecx
+        ret
+
+    draw_strong_zombie:
+        movzx ebx, [@@x0]
+        ;sub bl, [@@offset]
+        movzx ecx, [@@y0]
+        ;call drawZombie, ebx, ecx
+        call drawSprite, offset sprite4, VMEMADR, ebx, ecx
+        ret
+
+    draw_leap_zombie:
+        movzx ebx, [@@x0]
+        ;sub bl, [@@offset]
+        movzx ecx, [@@y0]
+        ;call drawZombie, ebx, ecx
+        call drawSprite, offset sprite5, VMEMADR, ebx, ecx
         ret
     
     draw_projectile:
@@ -2345,6 +2635,35 @@ PROC drawEntity
         ;add bl, [@@offset]
         movzx ecx, [@@y0]
         call drawProjectile, ebx, ecx
+        ;call drawSprite, offset sprite2, VMEMADR, ebx, ecx
+        ret
+
+    draw_potato:
+        movzx ebx, [@@x0]
+        movzx ecx, [@@y0]
+        ;call drawPlant, ebx, ecx
+        call drawSprite, offset sprite6, VMEMADR, ebx, ecx
+        ret
+
+    draw_bigger_potato:
+        movzx ebx, [@@x0]
+        movzx ecx, [@@y0]
+        ;call drawPlant, ebx, ecx
+        call drawSprite, offset sprite7, VMEMADR, ebx, ecx
+        ret
+
+    draw_bigger_plant:
+        movzx ebx, [@@x0]
+        movzx ecx, [@@y0]
+        ;call drawPlant, ebx, ecx
+        call drawSprite, offset sprite8, VMEMADR, ebx, ecx
+        ret
+
+    draw_biggest_plant:
+        movzx ebx, [@@x0]
+        movzx ecx, [@@y0]
+        ;call drawPlant, ebx, ecx
+        call drawSprite, offset sprite9, VMEMADR, ebx, ecx
         ret
 
 ENDP drawEntity
@@ -2412,9 +2731,9 @@ PROC drawProjectile
 
     ; draw a rectangle for the projectile
     mov ax, [@@x0]
-    add eax, 10
+    add eax, 20
     mov bx, [@@y0]
-    add ebx, 20
+    add ebx, 14
     call drawColoredRectangle, eax, ebx, 10, 5, 21
 
     ret
@@ -2552,16 +2871,21 @@ PROC renderFrame
     USES eax, ebx, ecx, edx, edi, esi
 
     call wait_VBLANK, 1 ; wait for the next frame
-    call fillBackgroundFaster, 93 ; fill the screen with white
+    call fillBackgroundFaster, 95 ; fill the screen with white
+    
+    call drawStaticEntitiesOnGrid, 11, offset grid ; draw the plants
+    call drawDynamicEntitiesOnGrid, 0, offset dynamic_grid ; draw the zombies and projectiles 
     call drawBackground ; draw the grid
     call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
     call drawShopInterface
-    call drawStaticEntitiesOnGrid, 11, offset grid ; draw the plants
-    call drawDynamicEntitiesOnGrid, 0, offset dynamic_grid ; draw the zombies and projectiles 
-    call ShowCursor ; show the mouse cursor on the screen
 
-    movzx eax, [selected_shop]
-    call printDecimalWithoutNewLine, eax
+    call ShowCursor ; show the mouse cursor on the screen
+    
+
+    ; movzx eax, [selected_shop]
+    ; call printDecimalWithoutNewLine, eax
+    call displayLevelName
+    call displayWaveNumber
 
     ret
 
@@ -2715,7 +3039,10 @@ PROC handleMouseClick
     ret
 
 call_SpawnSolver:
-    call SpawnSolver, eax, ebx
+    movzx ecx, [selected_shop]
+    
+    ; call SpawnSolver, eax, ebx
+    call spawnEntityType, eax, ebx, ecx
     ret
 
 no_click:
@@ -2802,6 +3129,757 @@ PROC setMouseLimits
 
     ret
 ENDP setMouseLimits
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+; SPRITE DRAWING
+
+
+PROC ReadFile
+	ARG	 @@filepathptr: dword,@@dataptr: dword,@@noofbytes: dword 
+	USES eax, ebx, ecx, edx, esi, edi
+	
+	; open file, get filehandle in AX
+	mov al, 0 ; read only
+	mov edx, [@@filepathptr]
+	mov ah, 3dh
+	int 21h
+	
+	mov  edx, offset openErrorMsg
+	jc @@print_error ; carry flag is set if error occurs
+
+	; read file data 
+	mov bx, ax ; move filehandle to bx
+	mov ecx, [@@noofbytes]
+	mov edx, [@@dataptr]
+	mov ah, 3fh
+	int 21h
+
+	mov  edx, offset readErrorMsg
+	jc @@print_error
+	
+	; close file
+	mov ah, 3Eh
+	int 21h
+	
+	mov  edx, offset closeErrorMsg
+	jc @@print_error
+	
+	ret
+
+@@print_error:
+	call setVideoMode, 03h
+	mov  ah, 09h
+	int  21h
+	
+	mov	ah,00h
+	int	16h
+	call terminateProcess	
+ENDP ReadFile
+
+PROC drawSprite
+    ARG @@spritePtr :dword, \
+    @@dstPtr :dword, \
+    @@x:dword, \
+    @@y:dword
+    LOCAL @@w:dword, @@h:dword
+    USES eax , ebx , ecx , edx , esi , edi
+    mov esi , [ @@spritePtr ]
+    xor eax , eax
+    lodsd ; read width in EAX
+    mov [@@w] , eax
+    lodsd ; read heigh in EAX
+    mov [@@h] , eax
+    mov edi , [ @@dstPtr ]
+    mov eax , [@@y]
+    mov ebx , SCRWIDTH
+    mul ebx
+    add edi , eax
+    add edi , [@@x] ; EDI po in ts to f i r s t p i x e l
+    mov ecx , [@@h]
+    @@drawLine :
+    push ecx
+    mov ecx , [@@w] ; need to copy a l in e o f the s p r i t e
+    rep movsb ; copy from e s i to ed i
+    add edi , SCRWIDTH
+    sub edi , [@@w] ; ed i now po in ts to the next l in e in d s t
+    pop ecx
+    dec ecx
+    jnz @@drawLine
+    ret
+ENDP drawSprite
+
+MACRO waitForKeystroke
+	mov	ah,00h
+	int	16h
+ENDM waitForKeystroke
+
+
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+; AUDIO
+
+
+PROC reset_dsp
+	mov dx, SB_BASE
+	add dl, 6
+	
+	mov al, 1
+	out dx, al
+	sub al, al
+@@delay:
+	dec al
+	jnz @@delay
+	out dx, al
+	
+	sub cx, cx
+@@empty:
+	mov dx, SB_BASE
+	add dl, 0eh
+	
+	in al, dx
+	or al, al
+	jns @@next_attempt
+	
+	sub dl, 4
+	in al, dx
+	cmp al, 0aah
+	je @@reset_ok
+	
+@@next_attempt:	
+	loop @@empty
+	
+@@reset_ok:
+	ret
+ENDP reset_dsp
+
+; bl = data
+PROC write_dsp
+	mov dx, SB_BASE
+	add dl, 0ch
+@@busy:
+	in al, dx
+	or al, al
+	js @@busy
+	
+	mov al, bl
+	out dx, al
+	ret
+ENDP write_dsp
+	
+; out: al 		
+PROC read_dsp
+	mov dx, SB_BASE
+	add dl, 0eh
+@@busy:
+	in al, dx
+	or al, al
+	jns @@busy
+	
+	sub dl, 4
+	in al, dx
+	ret
+ENDP read_dsp
+					
+PROC turn_speaker_on
+	mov bl, 0d1h
+	call write_dsp
+	ret
+ENDP turn_speaker_on
+			
+PROC turn_speaker_off
+	mov bl, 0d3h
+	call write_dsp
+	ret
+ENDP turn_speaker_off
+			
+PROC disable_irq_7
+	in al, 21h
+	or al, 10000000b
+	out 21h, al
+	ret
+ENDP disable_irq_7
+			
+PROC enable_irq_7
+	in al, 21h
+	and al, 01111111b
+	out 21h, al
+	ret
+ENDP enable_irq_7
+			
+PROC irq_7_handler NOLANGUAGE
+	pushad
+	bt [readbusy], 0	; verify if file is being read at the moment
+	jnc @@goahead		; delay sound stream reading if busy? otherwise go ahead.
+	mov [readfail], 1	; signal failure
+	jmp @@skipcopy
+@@goahead:
+	call readMusicPiece
+@@skipcopy:
+	
+	; SB 8-bit ack
+	mov dx, SB_BASE + 0eh
+	in al, dx
+	
+	; EOI
+	mov al, 20h
+	out 20h, al
+	
+	popad
+	iret
+ENDP irq_7_handler
+			
+PROC install_isr
+	mov ax, cs
+	mov ds, ax   	; load data segment with code segment (the one we are in now)
+	mov ah, 25h 	; Set Interrupt Vector Command
+	mov al, INT_NUMBER ; Interrupt to replace
+	mov edx, offset irq_7_handler
+	int 21h
+	ret
+ENDP install_isr
+			
+PROC program_dma
+	mov dx, 0ah ; write single mask register
+	mov al, 05h ; disable DMA channel 1
+	out dx, al
+	
+	mov dx, 0ch ; clear byte pointer flip flop
+	mov al, 0 ; any value
+	out dx, al 
+	
+	mov dx, 0bh ; write mode register
+	mov al, 59h ; auto-init playback
+	out dx, al
+	
+	mov dx, 03h ; channel 1 count
+	mov ax, (SND_BUFF_SIZE - 1)
+	out dx, al ; low byte
+	mov ax, (SND_BUFF_SIZE - 1) / 256
+	out dx, al ; high byte
+	
+
+	mov dx, 02h ; channel 1 address
+	mov eax, [buffer_start]
+	out dx, al ; low byte
+	mov al, ah
+	out dx, al ; high byte
+	
+	mov dx, 83h ; page register for 8-bit DMA channel 1
+	shr eax, 16
+	out dx, al
+	
+	mov dx, 0ah ; write single mask register
+	mov al, 01h ; enable DMA channel 1
+	out dx, al
+	
+	ret
+ENDP program_dma
+
+PROC set_sampling_rate
+	mov bl, 40h ; time constant
+	call write_dsp
+	mov bl, 0D3h ; ~22KHz
+	call write_dsp
+	ret
+ENDP set_sampling_rate
+			
+PROC start_playback
+	mov bl, 48h ; set block size for 8-bit auto-init mode
+	call write_dsp
+	mov bx, (SND_BUFF_SIZE / 2 - 1) ; low byte
+	call write_dsp
+	mov bx, (SND_BUFF_SIZE / 2 - 1) / 256 ; high byte
+	call write_dsp
+	
+	mov bl, 1ch ; start auto-init 8-bit DMA transfer
+	call write_dsp
+
+	ret
+ENDP start_playback
+
+PROC exit_auto_init
+	mov bl, 0dah
+	call write_dsp
+	ret
+ENDP exit_auto_init
+
+PROC calculate_sound_buffer_page_offset
+	mov eax, offset sound_buffer
+	cmp ax, 65536 - SND_BUFF_SIZE
+	jbe @@size_ok
+	xor ax, ax
+	dec ax
+	inc eax
+@@size_ok:
+	mov [buffer_start], eax
+	ret
+ENDP calculate_sound_buffer_page_offset
+
+
+; opens file with pointer to filename, returns file handle in ax
+PROC openFile
+	ARG	@@filename:dword RETURNS ax
+	USES ebx, ecx, edx
+	mov al, 0 ; read only
+	mov edx, [@@filename]
+	mov ah, 3dh
+	int 21h
+	
+	jnc @@no_error ; carry flag is set if error occurs
+
+	call setVideoMode, 03h
+	mov  ah, 09h
+	mov  edx, offset openErrorMsg
+	int  21h
+	
+	mov	ah, 00h
+	int	16h
+	call terminateProcess
+	
+@@no_error:
+	ret
+ENDP openFile
+
+; reads chunk to buffer
+PROC readChunk
+	ARG	@@destptr:dword, @@buffersize:dword, @@handle:word
+	USES eax, ebx, ecx, edx
+	movzx ebx, [@@handle]
+	mov ecx, [@@buffersize]
+	mov edx, [@@destptr]
+	mov ah, 3fh
+	int 21h
+	
+	jnc @@no_error ; carry flag is set if error occurs
+
+	call setVideoMode, 03h
+	mov  ah, 09h
+	mov  edx, offset readErrorMsg
+	int  21h
+	
+	mov	ah,00h
+	int	16h
+	call terminateProcess
+	
+@@no_error:
+	ret
+ENDP readChunk
+
+; closes file
+PROC closeFile
+	USES eax, ebx, ecx, edx
+	ARG	@@handle:word
+	movzx ebx, [@@handle]
+	mov ah, 3Eh
+	int 21h
+	
+	jnc @@no_error ; carry flag is set if error occurs
+
+	call setVideoMode, 03h
+	mov  ah, 09h
+	mov  edx, offset closeErrorMsg
+	int  21h
+	
+	mov	ah,00h
+	int	16h
+	call terminateProcess
+	
+@@no_error:
+	ret
+ENDP closeFile
+
+PROC readMusicPiece
+	USES edi
+	mov edi, [buffer_start]
+	neg [buffhalf]
+	jl @@firsthalf
+	add edi, SND_BUFF_SIZE/2
+@@firsthalf:
+	call readChunk, edi, SND_BUFF_SIZE/2, [sndhandle]
+	ret
+ENDP readMusicPiece
+
+; -------------------------------------------------------------------
+
+PROC startMusic
+        pushad
+        call openFile, offset sound_file
+        mov [sndhandle], ax
+
+        call reset_dsp	
+        call turn_speaker_on
+        call install_isr
+        
+        call enable_irq_7
+        call calculate_sound_buffer_page_offset
+        call program_dma
+        call set_sampling_rate
+        
+        call readMusicPiece
+        call readMusicPiece
+        call start_playback
+        popad
+
+        ret
+ENDP startMusic
+
+PROC stopMusic
+	pushad
+	call exit_auto_init
+	call disable_irq_7
+	call turn_speaker_off
+	call closeFile, [sndhandle]
+	popad
+	ret
+ENDP stopMusic
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+; LEVEL processing
+
+; function to display the level name
+PROC displayLevelName
+    USES eax, ebx, ecx, edx
+
+    ; get the current level name
+    mov ebx, [current_level]
+    mov eax, [ebx + LEVEL.level_name]
+
+
+    ; Set cursor position 
+    call setCursorPosition, 0, 0
+
+    ; Print the level name
+    call printString, eax
+
+    ret
+
+ENDP displayLevelName
+
+; function to display the wave number
+PROC displayWaveNumber
+    USES eax, ebx, ecx, edx
+
+    call setCursorPosition, 1, 1
+
+    ; get the current wave number
+    mov ebx, [current_level]
+    movzx eax, [current_wave]
+    inc eax
+    movzx ecx, [ebx + LEVEL.waves_count]
+    call printDecimalWithoutNewLine, eax
+    call setCursorPosition, 1, 2
+    call printString, offset msg_wave_interval
+    call setCursorPosition, 1, 3
+
+    ; print the total number of waves
+    call printDecimalWithoutNewLine, ecx
+
+    ret
+
+ENDP displayWaveNumber
+
+; function to increment the spawn counter
+PROC incrementSpawnCounter
+    ARG RETURNS eax
+    USES ebx, ecx, edx, edi, esi
+
+        ; increment the spawn counter
+        ; if it is equal to SPAWN_INTERVAL, reset the counter to 0 and return 1, otherwise return 0
+
+        mov al, [spawn_counter]
+        inc al
+        cmp al, SPAWN_INTERVAL
+        jne not_reset
+        mov al, 0
+        mov [spawn_counter], al
+        mov eax, 1
+        ret
+
+    not_reset:
+        mov [spawn_counter], al
+        mov eax, 0
+        ret
+
+ENDP incrementSpawnCounter
+
+; function to increment entity counter
+PROC incrementEntityCounter
+    ARG RETURNS eax
+    USES ebx, ecx, edx, edi, esi
+
+        ; increment the entity counter
+        ; if it is equal to the number of entities in the current wave, reset the counter to 0 and return 1, otherwise return 0
+
+        mov al, [current_entity]
+        inc al
+
+        cmp al, [wave_length]
+        jne not_reset_entity_counter
+        mov al, 0
+        mov [current_entity], al
+        mov eax, 1
+        ret
+
+    not_reset_entity_counter:
+        mov [current_entity], al
+        mov eax, 0
+        ret
+
+ENDP incrementEntityCounter
+
+; function to increment the wave counter
+PROC incrementWaveCounter
+    ARG RETURNS eax
+    USES ebx, ecx, edx, edi, esi
+
+        ; increment the wave counter
+        ; if it is equal to wave_length, reset the counter to 0 and return 1, otherwise return 0
+
+        mov al, [current_wave]
+        inc al
+        mov ebx, [current_level]
+        movzx ecx, [ebx + LEVEL.waves_count]
+        cmp al, cl
+        jne not_reset_wave_counter
+        mov al, 0
+        mov [current_wave], al
+        mov eax, 1
+        ret
+
+    not_reset_wave_counter:
+        mov [current_wave], al
+        mov eax, 0
+        ret
+
+ENDP incrementWaveCounter
+
+; function to increment the level counter
+PROC incrementLevelCounter
+    ARG RETURNS eax
+    USES ebx, ecx, edx, edi, esi
+
+        ; increment the level counter
+        ; check if it is the last level, if it is, return 1
+        ; if it is not the last level:
+        ; - update the current level pointer to the next level
+
+        mov al, [current_level_index]
+        inc al
+        cmp al, LEVELS_COUNT
+        je last_level_exit
+        mov [current_level_index], al
+        movzx eax, al
+        mov ebx, offset level_array
+        mov ecx, [ebx + eax * 4]
+        mov [current_level], ecx
+        mov eax, 0
+        ret
+
+    last_level_exit:
+        mov eax, 1
+        ret
+
+ENDP incrementLevelCounter
+
+; function to find a free spot in the grid
+; function to spawn entity at a given position given the type of the entity
+PROC spawnEntityType
+    ARG @@x:BYTE, @@y:BYTE, @@type:BYTE RETURNS eax
+    USES ebx, ecx, edx, edi, esi
+        
+        xor eax, eax
+        ; check if the position is valid
+        movzx eax, [@@x]
+        movzx ebx, [@@y]
+        movzx ecx, [@@type]
+        ; call getEntityType, eax, ebx, offset dynamic_grid
+        call getMainType, ecx
+        cmp eax, -1
+        je invalid_entity_spawn
+        cmp eax, 255
+        jge invalid_entity_spawn
+        ; if it didn't jump, the position is valid
+        cmp eax, 0 ; spawn default zombie
+        je SpawnPlantType
+        cmp eax, 1 ; spawn strong zombie
+        je SpawnZombieType
+        cmp eax, 2 ; spawn leap zombie
+        je SpawnProjectileType
+
+    invalid_entity_spawn:
+        mov eax, 1 ; return 1 if the entity could not be spawned
+        ret
+SpawnZombieType:
+    call getSubType, ecx
+    
+    cmp eax, 0
+    je spawn_default_zombie
+    cmp eax, 1
+    je spawn_strong_zombie
+    cmp eax, 2
+    je spawn_leap_zombie
+    
+    ret
+
+    spawn_default_zombie:
+        movzx eax, [@@x]
+        call spawnDefaultZombie, eax, ebx
+        mov eax, 0 ; return 0 if the entity was spawned
+        ret
+
+    spawn_strong_zombie:
+        movzx eax, [@@x]
+        call spawnStrongZombie, eax, ebx
+        mov eax, 0 ; return 0 if the entity was spawned
+        ret
+
+    spawn_leap_zombie:
+        movzx eax, [@@x]
+        call spawnLeapZombie, eax, ebx
+        mov eax, 0 ; return 0 if the entity was spawned
+        ret
+SpawnPlantType:
+    call getSubType, ecx
+    
+    cmp eax, 0
+    je spawn_default_plant
+    cmp eax, 1
+    je spawn_potato
+    cmp eax, 2
+    je spawn_bigger_potato
+    cmp eax, 3
+    je spawn_bigger_plant
+    cmp eax, 4 
+    je spawn_biggest_plant
+
+    ret
+    spawn_default_plant:
+        movzx eax, [@@x]
+        call spawnDefaultPlant, eax, ebx
+        mov eax, 0 ; return 0 if the entity was spawned
+        ret
+
+    spawn_potato:
+        movzx eax, [@@x]
+        call spawnPotato, eax, ebx
+        mov eax, 0 ; return 0 if the entity was spawned
+        ret
+
+    spawn_bigger_potato:
+        movzx eax, [@@x]
+        call spawnBiggerPotato, eax, ebx
+        mov eax, 0 ; return 0 if the entity was spawned
+        ret
+
+    spawn_bigger_plant:
+        movzx eax, [@@x]
+        call spawnBiggerPlant, eax, ebx
+        mov eax, 0 ; return 0 if the entity was spawned
+        ret
+
+    spawn_biggest_plant:
+        movzx eax, [@@x]
+        call spawnBiggestPlant, eax, ebx
+        mov eax, 0 ; return 0 if the entity was spawned
+        ret
+SpawnProjectileType:
+    spawn_projectile:
+        movzx eax, [@@x]
+        call spawnProjectile, eax, ebx
+        mov eax, 0 ; return 0 if the entity was spawned
+        ret
+
+ENDP spawnEntityType
+
+; function to find a free spot in the 9th column and spawn the entity
+PROC findFreeSpotLastColumn
+    ARG @@entityType:BYTE RETURNS eax
+    LOCAL @@count:BYTE
+    USES ebx, ecx, edx, esi, edi
+
+    call rand5
+
+    ; This is a placeholder and should be replaced with your actual logic
+    mov ecx, 9  ; 9th column index
+    mov edx, eax  ; Start at the top row
+
+find_free_spot_loop:
+    ; Check if the spot is free 
+    ; This is a placeholder condition
+    call getEntityType, ecx, edx, offset dynamic_grid
+    call getMainType, eax
+    cmp al, -1
+    je found_free_spot
+    cmp al, 255
+    je found_free_spot
+
+    ; Move to the next row
+    inc edx
+    cmp edx, ROWS
+    jne find_free_spot_loop
+
+    ; No free spot found, return with an error code
+    mov eax, 1
+    ret
+
+found_free_spot:
+    ; Free spot found, spawn the entity 
+    ; This is a placeholder spawn logic
+    movzx eax, [@@entityType]
+    add eax, 10
+    call printDecimalWithoutNewLine, eax
+    call spawnEntityType, ecx, edx, eax
+    mov eax, 0  ; Success
+    ret
+; Call drawSpritePartial to draw a part of the sprite
+ENDP findFreeSpotLastColumn
+
+; function to handle the spawning of entities
+PROC handleEntitySpawning
+    USES eax, ebx, ecx, edx, edi, esi
+
+        ; increment the spawn counter
+        call incrementSpawnCounter
+        cmp al, 0
+        je not_spawn 
+
+        ; get the current entity type
+        mov ebx, [current_level]
+        movzx eax, [current_wave]
+        imul eax, 4                   ; Multiply wave index by 4 (size of a pointer)
+        mov edx, [ebx + LEVEL.waves]
+        add edx, eax
+        mov edx, [edx]                ; Get the pointer to the current wave
+        movzx ecx, [current_entity]
+        add edx, ecx
+        mov eax, [edx]              ; Get the entity type
+
+        ;call spawnEntityType, 9, 0, eax ; TODO change the type of the entity, based on what is in the array
+        call findFreeSpotLastColumn, eax
+        cmp al, 1
+        je not_spawn ; if the entity could not be spawned, do not increment the entity counter
+
+        ; increment the entity counter
+        call incrementEntityCounter
+        cmp al, 0
+        je not_spawn
+
+        ; increment the wave counter
+        call incrementWaveCounter
+        cmp al, 0
+        je not_spawn
+
+        ; change the level if the wave counter was reset
+        call incrementLevelCounter
+        cmp al, 0
+        je not_spawn
+        ; if al contains 1, the last level was reached, end the game
+        call terminateProcess
+
+    not_spawn:
+        ret
+
+ENDP handleEntitySpawning
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
@@ -2974,41 +4052,44 @@ draw_shop_loop:
     ; Read the sub_type to determine which item (zombie/plant/...)
     movzx ebp, [esi + REGION.sub_type]  ; ebp = sub_type
     
-    cmp ebp, 10 ; subtype 10 for zombie
-    je zombie_button
-
-    cmp ebp, 00 ; subtype 00 for plant
+    ;save eax
+    push eax
+    call getMainType, ebp
+    cmp eax, 0
+    
     je plant_button
-
+    call getMainType, ebp
+    cmp eax, 1
+    
+    je zombie_button
+    pop eax
+    ;restore eax and go to next region
     jmp not_shop_region
+    
 
 zombie_button:
+    pop eax
+
     mov ecx, 7  ; gray tint
-    jmp draw_button
-
-plant_button:
-    mov ecx, 2  ; green tint 
-    jmp draw_button
-
-draw_button:
     ; Draw the base button
     push ecx ; Save color value
+
     call drawColoredRectangle, eax, ebx, edx, edi, ecx
     pop ecx ; Restore color value
 
-    ; Check ebp to determine what to draw
-    cmp ebp, 10          ; sub_type = 10 => zombie
-    je draw_zombie_on_button
-    cmp ebp, 0           ; sub_type = 0 => plant
-    je draw_plant_on_button
+    
+    call drawEntity, eax, ebx, ebp
     jmp after_entity_draw
 
-draw_zombie_on_button:
-    call drawZombie, eax, ebx
-    jmp after_entity_draw
-
-draw_plant_on_button:
-    call drawPlant, eax, ebx
+plant_button:
+    pop eax
+    ; Draw the base button
+    mov ecx, 2  ; green tint 
+    push ecx ; Save color value
+    call drawColoredRectangle, eax, ebx, edx, edi, ecx
+    pop ecx ; Restore color value
+    
+    call drawEntity, eax, ebx, ebp
     jmp after_entity_draw
 
 after_entity_draw:
@@ -3035,6 +4116,8 @@ not_shop_region:
 done_shop:
     ret
 ENDP drawShopInterface
+
+
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
 PROC main
@@ -3057,38 +4140,59 @@ PROC main
 @@mouse_present:
     ; Set video mode to 13h and install mouse handler
     call    setVideoMode, 13h
+    call startMusic
     call    mouse_install, offset mouseHandler
+    call    rand_init
+
+    lea eax, [sprite1+8];get memory location of first image data element in the sprite variable
+	call ReadFile, offset sprite_file1, eax,DATASIZE ;Fill image data from file data
+    lea eax, [sprite2+8];get memory location of first image data element in the sprite variable
+    call ReadFile, offset sprite_file2, eax,DATASIZE ;Fill image data from file data
+    lea eax,[sprite3+8]
+    call ReadFile, offset sprite_file3, eax,DATASIZE
+    lea eax,[sprite4+8]
+    call ReadFile, offset sprite_file4, eax,DATASIZE
+    lea eax,[sprite5+8]
+    call ReadFile, offset sprite_file5, eax,DATASIZE
+    lea eax,[sprite6+8]
+    call ReadFile, offset sprite_file6, eax,DATASIZE
+    lea eax,[sprite7+8]
+    call ReadFile, offset sprite_file7, eax,DATASIZE
+    lea eax,[sprite8+8]
+    call ReadFile, offset sprite_file8, eax,DATASIZE
+    lea eax,[sprite9+8]
+    call ReadFile, offset sprite_file9, eax,DATASIZE
 
     ; Initialize first region (regionIndex = 0) 
     ;updateRegionCell args: regionIndex, fieldOffset, value, size
+    
+    call initializeRegion, 0, 0, 24, 40, 79, 1, 00
+    call initializeRegion, 1, 25, 49, 40, 79, 1, 01
+    call initializeRegion, 2, 0, 24, 80, 119, 1, 03
+    call initializeRegion, 3, 25, 49, 80, 119, 1, 02
+    call initializeRegion, 4, 0, 24, 120, 159, 1, 04
+    call initializeRegion, 5, 25, 49, 120, 159, 1, 10
+    
 
-    call initializeRegion, 5, 0, 24, 40, 79, 1, 50
-    call initializeRegion, 1, 0, 24, 80, 119, 1, 00
-    call initializeRegion, 2, 0, 24, 120, 159, 1, 20
-    call initializeRegion, 3, 24, 49, 40, 79, 1, 30
-    call initializeRegion, 4, 24, 49, 80, 119, 1, 40
-    call initializeRegion, 0, 24, 49, 120, 159, 1, 10
     
     
-    push eax 
-    movzx eax, [selected_shop]
-
-    ; call printDecimal, eax
-
-    pop eax
     
     ; Spawn entities
-    call spawnDefaultZombie, 8, 0
-    call spawnDefaultZombie, 8, 1
-    call spawnDefaultZombie, 8, 2
-    call spawnDefaultZombie, 8, 3
-    call spawnDefaultZombie, 8, 4
+    ; call spawnDefaultZombie, 8, 0
+    ; call spawnDefaultZombie, 8, 1
+    ; call spawnDefaultZombie, 8, 2
+    ; call spawnDefaultZombie, 8, 3
+    ; call spawnDefaultZombie, 8, 4
 
     call spawnDefaultPlant, 0, 0
     call spawnDefaultPlant, 0, 1
     call spawnDefaultPlant, 0, 2
-    call spawnDefaultPlant, 0, 3
-    call spawnDefaultPlant, 0, 4
+    call spawnPotato, 5, 3
+    call spawnBiggerPotato, 5, 4
+    ;call spawnBiggerPlant, 0, 3
+    ;call spawnBiggestPlant, 0, 4
+    call startTime
+
     ; Main game loop
 @@gameLoop:
     ; Process other game logic
@@ -3099,10 +4203,14 @@ PROC main
 
     ; Render the frame
     call renderFrame
-    
-    call getXOfDynamicEntity, 0
-    
 
+    call handleEntitySpawning
+
+    call checkAndResetTimer
+
+    ;call incrementSpawnCounter
+    ;
+    
     ; Check for ESC key to exit
     call    checkForSpecificKeystroke, 001Bh
     jmp     @@gameLoop
@@ -3136,16 +4244,15 @@ DATASEG
     ENDS REGION
 
 	palette		db 768 dup (?) ; 256 colors * 3 bytes per color
-    grid        ENTITY 100 dup (<>)  ; 5 rows * 20 columns
-    regions     REGION 20 dup (<>) ;make space for max 20 regions
+    grid        ENTITY 50 dup (<>)  ; 5 rows * 20 columns
+    
 
-    dynamic_grid db 100 dup (-1) ; 5 rows * 20 columns
+    dynamic_grid db 50 dup (-1) ; 5 rows * 20 columns
     dynamic_entities_array ENTITY 100 dup (<>) ; make space for 100 entities
     free_index db 0 ; index of the first free entity in the dynamic_entities_array
     mob_capacity db 100 ; maximum number of entities in the dynamic_entities_array
     mob_counter db 0 ; number of entities in the dynamic_entities_array
-
-    sprite db "test.bmp", 0
+    regions     REGION 20 dup (<>) ;make space for max 20 regions
     buffer db BMP_HEADER_SIZE + 320 * 200 dup (0)
 
     msg_unknown db "Unknown entity type", 10, 13, "$"
@@ -3154,6 +4261,8 @@ DATASEG
     msg_no_mouse    db 'No mouse found!', 0dh, 0ah, '$'
 
     msg_test    db 'Test $'
+
+    msg_wave_interval db "/", '$'
 
     start_time dd 0
     elapsed_time dd 0
@@ -3183,6 +4292,141 @@ DATASEG
     ; - 1 byte: render hierarchy (0 for background, 1 for entities, 2 for projectiles, 3 for UI)
 
 
+    ; -------------------------------------------------------------------
+    ; LEVELS
+
+    STRUC LEVEL
+        level_name dd ?      ; Pointer to the level name
+        waves_count db ?     ; Number of waves
+        waves dd ?           ; Pointer to the waves
+    ENDS LEVEL
+
+    level_array dd offset level1_instance, offset level2_instance, offset level3_instance, offset level4_instance, offset level5_instance, offset level6_instance, offset level7_instance, offset level8_instance
+
+    current_level_index db 0 ; index of the current level
+    current_level dd offset level1_instance ; pointer to the current level
+    current_wave db 0 ; counter for the current wave
+    current_entity db 0 ; counter for the current entity in the current wave
+    wave_length db 15 ; length of waves
+    spawn_counter db 0
+
+    ; Level 1
+    level1_name db "Level 1", '$'
+    level1_wave1 db -1, -1, 0, -1, 0, -1, -1, -1, 0, -1, -1, -1, 0, -1, -1
+    level1_wave2 db -1, -1, 0, 0, -1, -1, -1, 0, -1, 0, -1, -1, -1, 0, -1
+    level1_wave3 db -1, -1, -1, 0, -1, -1, -1, -1, 0, -1, -1, -1, 0, -1, -1
+    level1_waves dd offset level1_wave1, offset level1_wave2, offset level1_wave3
+    level1_instance LEVEL <offset level1_name, 3, level1_waves>
+
+
+    ; Level 2
+    level2_name db "Level 2", '$'
+    level2_wave1 db 0, -1, 0, -1, 0, -1, 0, -1, -1, 0, -1, 0, -1, -1, -1
+    level2_wave2 db -1, 0, 1, -1, 0, -1, 0, 1, -1, 0, -1, -1, 0, -1, -1
+    level2_wave3 db -1, 0, 0, -1, 1, -1, 0, -1, -1, 0, 0, -1, 1, -1, 0
+    level2_wave4 db -1, -1, 1, -1, 0, -1, -1, -1, 0, -1, -1, -1, 1, -1, 0
+    level2_waves dd offset level2_wave1, offset level2_wave2, offset level2_wave3, offset level2_wave4
+    level2_instance LEVEL <offset level2_name, 4, level2_waves>
+
+    ; Level 3
+    level3_name db "Level 3", '$'
+    level3_wave1 db -1, 0, 0, -1, 1, -1, 0, 0, -1, 0, -1, 1, 0, -1, 0
+    level3_wave2 db 0, 1, 1, -1, 0, -1, -1, 2, 1, -1, 0, -1, 0, -1, 1
+    level3_wave3 db 0, 1, -1, -1, 1, -1, 0, -1, -1, 0, -1, 2, 0, -1, 1
+    level3_waves dd offset level3_wave1, offset level3_wave2, offset level3_wave3
+    level3_instance LEVEL <offset level3_name, 3, level3_waves>
+
+    ; Level 4
+    level4_name db "Level 4", '$'
+    level4_wave1 db 0, 1, 0, -1, 0, 1, 2, -1, 0, 1, 0, -1, 1, -1, 2
+    level4_wave2 db 0, 2, -1, 1, 0, -1, 2, 1, 0, -1, 0, 2, -1, 1, 1
+    level4_waves dd offset level4_wave1, offset level4_wave2
+    level4_instance LEVEL <offset level4_name, 2, level4_waves>
+
+    ; Level 5
+    level5_name db "Level 5", '$'
+    level5_wave1 db 0, 0, 2, -1, 2, -1, 1, 2, -1, 0, -1, 2, 0, -1, 1
+    level5_wave2 db 1, 2, -1, 1, 1, 2, -1, 0, 2, -1, 0, 2, 1, -1, 1
+    level5_wave3 db 0, 2, 1, -1, 1, -1, 0, -1, 2, -1, 0, 1, 2, 1, -1
+    level5_waves dd offset level5_wave1, offset level5_wave2, offset level5_wave3
+    level5_instance LEVEL <offset level5_name, 3, level5_waves>
+
+    ; Level 6
+    level6_name db "Level 6", '$'
+    level6_wave1 db 2, 1, 1, -1, 0, 2, 1, -1, 1, 2, -1, 2, 0, 1, 2
+    level6_wave2 db 2, 1, -1, 2, 2, -1, 1, 0, 2, -1, 2, 1, -1, 2, 1
+    level6_waves dd offset level6_wave1, offset level6_wave2
+    level6_instance LEVEL <offset level6_name, 2, level6_waves>
+
+    ; Level 7
+    level7_name db "Level 7", '$'
+    level7_wave1 db 2, 2, 1, 2, 2, 1, 2, 1, 1, 2, 2, 1, 1, 2, 2
+    level7_wave2 db 2, 2, 1, 2, 2, 1, 2, 2, 1, 2, 2, 1, 2, 2, 1
+    level7_waves dd offset level7_wave1, offset level7_wave2
+    level7_instance LEVEL <offset level7_name, 2, level7_waves>
+
+    ; Level 8
+    level8_name db "Level 8", '$'
+    level8_wave1 db 2, 2, 2, 1, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2
+    level8_wave2 db 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
+    level8_waves dd offset level8_wave1, offset level8_wave2
+    level8_instance LEVEL <offset level8_name, 2, level8_waves>
+
+    ; SPRITES
+    ; Plants
+    sprite_file1 db "sprites/SPRITEDP.bin", 0 ; default plant
+    sprite_file6 db "sprites/SPRITEDQ.bin", 0 ; potato
+    sprite_file7 db "sprites/SPRITEDR.bin", 0 ; bigger pea shooter
+    sprite_file8 db "sprites/SPRITEDS.bin", 0 ; bigger potato
+    sprite_file9 db "sprites/SPRITEDT.bin", 0 ; biggest pea shooter
+
+    ; Projectile
+    sprite_file2 db "sprites/SPRITEDA.bin", 0
+    ; Zombies
+    sprite_file3 db "sprites/SPRITEDC.bin", 0 ; default zombie
+    sprite_file4 db "sprites/SPRITEDD.bin", 0 ; strong zombie
+    sprite_file5 db "sprites/SPRITEDF.bin", 0 ; leap zombie
+
+	openErrorMsg db "could not open file", 13, 10, '$'
+	readErrorMsg db "could not read data", 13, 10, '$'
+	closeErrorMsg db "error during file closing", 13, 10, '$'
+
+	sprite1 DD SPRITEWIDTH, SPRITEHEIGHT
+    DB DATASIZE DUP(0)
+
+    sprite2 DD SPRITEWIDTH, SPRITEHEIGHT
+    DB DATASIZE DUP(0)
+
+    sprite3 DD SPRITEWIDTH, SPRITEHEIGHT
+    DB DATASIZE DUP(0)
+
+    sprite4 DD SPRITEWIDTH, SPRITEHEIGHT
+    DB DATASIZE DUP(0)
+
+    sprite5 DD SPRITEWIDTH, SPRITEHEIGHT
+    DB DATASIZE DUP(0)
+
+    sprite6 DD SPRITEWIDTH, SPRITEHEIGHT
+    DB DATASIZE DUP(0)
+
+    sprite7 DD SPRITEWIDTH, SPRITEHEIGHT
+    DB DATASIZE DUP(0)
+
+    sprite8 DD SPRITEWIDTH, SPRITEHEIGHT
+    DB DATASIZE DUP(0)
+
+    sprite9 DD SPRITEWIDTH, SPRITEHEIGHT
+    DB DATASIZE DUP(0)
+
+    ; AUDIO
+
+    sound_file db "audio/loop.RAW", 0
+	buffhalf db 1	; what buffer half has to be copied
+	
+	readbusy dw 0	; if busy reading something else
+	readfail dw 0 	; signal if interrupt was called during busy time
+	
+    
 ; -------------------------------------------------------------------
 ; STACK
 ; -------------------------------------------------------------------
