@@ -25,6 +25,9 @@ BMP_HEADER_SIZE equ 54
 SPRITEWIDTH EQU 30
 SPRITEHEIGHT EQU 40
 DATASIZE EQU SPRITEWIDTH*SPRITEHEIGHT;bytes of data in file
+BUTTONWIDTH EQU 25
+BUTTONHEIGHT EQU 33
+BUTTONSIZE EQU BUTTONWIDTH*BUTTONHEIGHT
 
 TILE_WIDTH EQU 30
 TILE_HEIGHT EQU 40
@@ -37,7 +40,7 @@ ENTITY_SIZE EQU 12
 ENTITY_BIAS EQU 11
 MAX_ENTITIES EQU 100
 SPAWN_INTERVAL EQU 100
-LEVELS_COUNT EQU 8
+LEVELS_COUNT EQU 0
 
 SB_BASE equ 220h
 SB_IRQ equ 7
@@ -2572,13 +2575,15 @@ ENDP addXoffset
 
 ; function to draw an entity, given a type
 PROC drawEntity
-    ARG @@x0:word, @@y0:word, @@type:byte, @@offset:byte
+    ARG @@x0:word, @@y0:word, @@type:byte
     USES eax, ebx, ecx, edx, edi
 
         ; check the type of the entity
         ; draw the entity based on the type
 
         movzx eax, [@@type] ; TODO make switch case
+        movzx ebx, [@@x0]
+        movzx ecx, [@@y0]
         cmp al, 0
         je draw_plant
         cmp al, 1
@@ -2600,71 +2605,42 @@ PROC drawEntity
         ret
     
     draw_plant:
-        movzx ebx, [@@x0]
-        movzx ecx, [@@y0]
-        ;call drawPlant, ebx, ecx
         call drawSprite, offset sprite1, VMEMADR, ebx, ecx
         ret
-    
+
     draw_zombie:
-        movzx ebx, [@@x0]
-        ;sub bl, [@@offset]
-        movzx ecx, [@@y0]
-        ;call drawZombie, ebx, ecx
         call drawSprite, offset sprite3, VMEMADR, ebx, ecx
         ret
 
     draw_strong_zombie:
-        movzx ebx, [@@x0]
-        ;sub bl, [@@offset]
-        movzx ecx, [@@y0]
-        ;call drawZombie, ebx, ecx
         call drawSprite, offset sprite4, VMEMADR, ebx, ecx
         ret
 
     draw_leap_zombie:
-        movzx ebx, [@@x0]
-        ;sub bl, [@@offset]
-        movzx ecx, [@@y0]
-        ;call drawZombie, ebx, ecx
         call drawSprite, offset sprite5, VMEMADR, ebx, ecx
         ret
     
     draw_projectile:
-        movzx ebx, [@@x0]
-        ;add bl, [@@offset]
-        movzx ecx, [@@y0]
         call drawProjectile, ebx, ecx
         ;call drawSprite, offset sprite2, VMEMADR, ebx, ecx
         ret
 
     draw_potato:
-        movzx ebx, [@@x0]
-        movzx ecx, [@@y0]
-        ;call drawPlant, ebx, ecx
         call drawSprite, offset sprite6, VMEMADR, ebx, ecx
         ret
 
     draw_bigger_potato:
-        movzx ebx, [@@x0]
-        movzx ecx, [@@y0]
-        ;call drawPlant, ebx, ecx
         call drawSprite, offset sprite7, VMEMADR, ebx, ecx
         ret
 
     draw_bigger_plant:
-        movzx ebx, [@@x0]
-        movzx ecx, [@@y0]
-        ;call drawPlant, ebx, ecx
         call drawSprite, offset sprite8, VMEMADR, ebx, ecx
         ret
 
     draw_biggest_plant:
-        movzx ebx, [@@x0]
-        movzx ecx, [@@y0]
-        ;call drawPlant, ebx, ecx
         call drawSprite, offset sprite9, VMEMADR, ebx, ecx
         ret
+
 
 ENDP drawEntity
 
@@ -3827,7 +3803,7 @@ found_free_spot:
     ; This is a placeholder spawn logic
     movzx eax, [@@entityType]
     add eax, 10
-    call printDecimalWithoutNewLine, eax
+    ; call printDecimalWithoutNewLine, eax
     call spawnEntityType, ecx, edx, eax
     mov eax, 0  ; Success
     ret
@@ -4077,8 +4053,7 @@ zombie_button:
     call drawColoredRectangle, eax, ebx, edx, edi, ecx
     pop ecx ; Restore color value
 
-    
-    call drawEntity, eax, ebx, ebp
+    call drawSprite, offset button6, VMEMADR, eax, ebx
     jmp after_entity_draw
 
 plant_button:
@@ -4089,8 +4064,45 @@ plant_button:
     call drawColoredRectangle, eax, ebx, edx, edi, ecx
     pop ecx ; Restore color value
     
-    call drawEntity, eax, ebx, ebp
+    call getSubType, ebp
+    cmp al, 0
+    je draw_plant_button
+    cmp al, 1
+    je draw_potato_button
+    cmp al, 2
+    je draw_bigger_potato_button
+    cmp al, 3
+    je draw_bigger_plant_button
+    cmp al, 4
+    je SHORT draw_biggest_plant_button
+    jmp SHORT after_entity_draw
+
+draw_plant_button:
+    movzx eax, [esi + REGION.x_min] 
+    call drawSprite, offset button1, VMEMADR, eax, ebx
     jmp after_entity_draw
+
+draw_potato_button:
+    movzx eax, [esi + REGION.x_min] 
+    call drawSprite, offset button4, VMEMADR, eax, ebx
+    jmp after_entity_draw
+
+draw_bigger_potato_button:
+    movzx eax, [esi + REGION.x_min] 
+    call drawSprite, offset button5, VMEMADR, eax, ebx
+    jmp after_entity_draw
+
+draw_bigger_plant_button:
+    movzx eax, [esi + REGION.x_min] 
+    call drawSprite, offset button2, VMEMADR, eax, ebx
+    jmp after_entity_draw
+
+draw_biggest_plant_button:
+    movzx eax, [esi + REGION.x_min] 
+    call drawSprite, offset button3, VMEMADR, eax, ebx
+
+    ; call drawEntity, eax, ebx, ebp
+    ; jmp after_entity_draw
 
 after_entity_draw:
     
@@ -4163,16 +4175,33 @@ PROC main
     lea eax,[sprite9+8]
     call ReadFile, offset sprite_file9, eax,DATASIZE
 
+    lea eax, [button1+8]
+    call ReadFile, offset button_file1, eax, DATASIZE
+
+    lea eax, [button2+8]
+    call ReadFile, offset button_file2, eax, DATASIZE
+
+    lea eax, [button3+8]
+    call ReadFile, offset button_file3, eax, DATASIZE
+
+    lea eax, [button4+8]
+    call ReadFile, offset button_file4, eax, DATASIZE
+
+    lea eax, [button5+8]
+    call ReadFile, offset button_file5, eax, DATASIZE
+
+    lea eax, [button6+8]
+    call ReadFile, offset button_file6, eax, DATASIZE
+    
     ; Initialize first region (regionIndex = 0) 
     ;updateRegionCell args: regionIndex, fieldOffset, value, size
-    
-    call initializeRegion, 0, 0, 24, 40, 79, 1, 00
-    call initializeRegion, 1, 25, 49, 40, 79, 1, 01
-    call initializeRegion, 2, 0, 24, 80, 119, 1, 03
-    call initializeRegion, 3, 25, 49, 80, 119, 1, 02
-    call initializeRegion, 4, 0, 24, 120, 159, 1, 04
-    call initializeRegion, 5, 25, 49, 120, 159, 1, 10
-    
+
+    call initializeRegion, 0, 0, 24, 50, 82, 1, 00
+    call initializeRegion, 1, 0, 24, 83, 115, 1, 03
+    call initializeRegion, 2, 0, 24, 116, 148, 1, 04
+    call initializeRegion, 3, 25, 49, 50, 82, 1, 01
+    call initializeRegion, 4, 25, 49, 83, 115, 1, 02
+    call initializeRegion, 5, 25, 49, 116, 148, 1, 10
 
     
     
@@ -4189,8 +4218,8 @@ PROC main
     call spawnDefaultPlant, 0, 2
     call spawnPotato, 5, 3
     call spawnBiggerPotato, 5, 4
-    ;call spawnBiggerPlant, 0, 3
-    ;call spawnBiggestPlant, 0, 4
+    call spawnBiggerPlant, 0, 3
+    call spawnBiggestPlant, 0, 4
     call startTime
 
     ; Main game loop
@@ -4386,6 +4415,14 @@ DATASEG
     sprite_file3 db "sprites/SPRITEDC.bin", 0 ; default zombie
     sprite_file4 db "sprites/SPRITEDD.bin", 0 ; strong zombie
     sprite_file5 db "sprites/SPRITEDF.bin", 0 ; leap zombie
+    ; BUTTONS
+    ; Button Files
+    button_file1 db "sprites/defplant.bin", 0     ; Bigger Plant Button
+    button_file2 db "sprites/bigplant.bin", 0    ; Biggest Plant Button
+    button_file3 db "sprites/maxplant.bin", 0        ; Default Plant Button
+    button_file4 db "sprites/potato.bin", 0           ; Potato Button
+    button_file5 db "sprites/potato2.bin", 0          ; Second Potato Button
+    button_file6 db "sprites/zombie.bin", 0           ; Zombie Button
 
 	openErrorMsg db "could not open file", 13, 10, '$'
 	readErrorMsg db "could not read data", 13, 10, '$'
@@ -4417,6 +4454,25 @@ DATASEG
 
     sprite9 DD SPRITEWIDTH, SPRITEHEIGHT
     DB DATASIZE DUP(0)
+
+    button1 DD BUTTONWIDTH, BUTTONHEIGHT
+    DB BUTTONSIZE DUP(0)
+
+    button2 DD BUTTONWIDTH, BUTTONHEIGHT
+    DB BUTTONSIZE DUP(0)
+
+    button3 DD BUTTONWIDTH, BUTTONHEIGHT
+    DB BUTTONSIZE DUP(0)
+
+    button4 DD BUTTONWIDTH, BUTTONHEIGHT
+    DB BUTTONSIZE DUP(0)
+
+    button5 DD BUTTONWIDTH, BUTTONHEIGHT
+    DB BUTTONSIZE DUP(0)
+
+    button6 DD BUTTONWIDTH, BUTTONHEIGHT
+    DB BUTTONSIZE DUP(0)
+ 
 
     ; AUDIO
 
