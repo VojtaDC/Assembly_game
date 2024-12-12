@@ -40,7 +40,7 @@ ENTITY_SIZE EQU 12
 ENTITY_BIAS EQU 11
 MAX_ENTITIES EQU 100
 SPAWN_INTERVAL EQU 100
-LEVELS_COUNT EQU 0
+LEVELS_COUNT EQU 8
 
 SB_BASE equ 220h
 SB_IRQ equ 7
@@ -231,6 +231,24 @@ gridY_out_of_bounds:
     ret
 
 ENDP convertScreenCoordsToGridCoords
+
+; Function to convert grid coordinates to pixel position
+PROC convertGridCoordsToPixelPosition
+    ARG @@gridX:DWORD, @@gridY:DWORD RETURNS eax, ebx ; eax = pixelX, ebx = pixelY
+    USES ecx, edx
+
+    ; Calculate pixelX = gridX * TILE_WIDTH + SHOP_WIDTH
+    mov eax, [@@gridX]
+    imul eax, TILE_WIDTH
+    add eax, SHOP_WIDTH
+
+    ; Calculate pixelY = gridY * TILE_HEIGHT
+    mov ebx, [@@gridY]
+    imul ebx, TILE_HEIGHT
+
+    ret
+ENDP convertGridCoordsToPixelPosition
+
 ; function to check if x is on the boundary of the next cell
 PROC checkIfXIsOnBoundary
         ARG @@x:BYTE RETURNS eax, ebx ; eax is the x, ebx is whether it passed the boundary
@@ -1422,6 +1440,9 @@ PROC inflictDamageToDynamicEntityFromArray
     ; get the health of the entity
     ; subtract the damage from the health
     ; if the health is less than or equal to 0, remove the entity
+    mov eax, [player_coins]
+    add eax, 5
+    mov [player_coins], eax
 
     xor eax, eax
     mov edi, offset dynamic_entities_array
@@ -1606,7 +1627,7 @@ ENDP isPositionFree
 ; get entity types (both mainType and subType)
 PROC getEntityTypes
     ARG @@raw:BYTE RETURNS eax, ebx
-    USES ecx
+    USES ecx, edx
         ; function to get both mainType and subType of an entity
         ; type consists of two digits, first digit is type, which discriminates between zombies, plants and so on
         ; the second digit discriminates between different types of the same entity, for example, different types of zombies
@@ -1615,28 +1636,20 @@ PROC getEntityTypes
         ; get the result by dividing the type by 10, the result is the mainType, the remainder is the subType
         xor eax, eax
         xor ebx, ebx
+        xor edx, edx
         mov al, [@@raw]
+
         cmp al, -1
         je unknown_entity_get_types
         cmp al, 255
         je unknown_entity_get_types
-        cmp al, 10
-        jl plant_type
-        mov cl, 10
-        xor ah, ah
-        div cl ; divide al by cl, result in al (mainType), remainder in ah (subType)
-
-        movzx eax, al ; mainType in eax
-        movzx ebx, ah ; subType in ebx
-        ret 
-
-    plant_type:
-        movzx ebx, al ; subType in ebx
-        xor eax, eax ; mainType in eax = 0 (plant)
         
+        mov ecx, 10
+        div ecx ; divide al by cl, result in al (mainType), remainder in ah (subType)
+        movzx eax, al ; mainType in eax
+        mov ebx, edx ; subType in ebx
 
         ret
-
     unknown_entity_get_types:
         mov eax, 255
         mov ebx, 255
@@ -1649,10 +1662,9 @@ ENDP getEntityTypes
 PROC getMainType
     ARG @@raw:BYTE RETURNS eax
     USES ebx
-    
+
         movzx eax, [@@raw]
         call getEntityTypes, eax
-        ; mainType is al in eax, geen verdere actie nodig
 
         ret
 
@@ -1662,13 +1674,12 @@ ENDP getMainType
 PROC getSubType
     ARG @@raw:BYTE RETURNS eax
     USES ebx
-
+        
         movzx eax, [@@raw]
         call getEntityTypes, eax
-        mov eax, ebx ; verplaats subType van ebx naar eax
+        mov eax, ebx ; move subType (in ebx) to eax 
 
         ret
-
 ENDP getSubType
 
 ; **HEALTH AND DAMAGE**
@@ -2854,12 +2865,10 @@ PROC renderFrame
     call drawBackground ; draw the grid
     call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
     call drawShopInterface
+    call displayCoins
 
     call ShowCursor ; show the mouse cursor on the screen
-    
 
-    ; movzx eax, [selected_shop]
-    ; call printDecimalWithoutNewLine, eax
     call displayLevelName
     call displayWaveNumber
 
@@ -3668,16 +3677,23 @@ PROC spawnEntityType
         movzx eax, [@@x]
         movzx ebx, [@@y]
         movzx ecx, [@@type]
+
+        call isPositionFree, eax, ebx
+        cmp eax, 0
+        je position_not_free
         ; call getEntityType, eax, ebx, offset dynamic_grid
+        
         call getMainType, ecx
+
         cmp eax, -1
         je invalid_entity_spawn
         cmp eax, 255
         jge invalid_entity_spawn
+        
         ; if it didn't jump, the position is valid
-        cmp eax, 0 ; spawn default zombie
+        cmp eax, 0 ; spawn plant
         je SpawnPlantType
-        cmp eax, 1 ; spawn strong zombie
+        cmp eax, 1 ; spawn zombie
         je SpawnZombieType
         cmp eax, 2 ; spawn leap zombie
         je SpawnProjectileType
@@ -3686,8 +3702,9 @@ PROC spawnEntityType
         mov eax, 1 ; return 1 if the entity could not be spawned
         ret
 SpawnZombieType:
+
     call getSubType, ecx
-    
+
     cmp eax, 0
     je spawn_default_zombie
     cmp eax, 1
@@ -3715,6 +3732,14 @@ SpawnZombieType:
         mov eax, 0 ; return 0 if the entity was spawned
         ret
 SpawnPlantType:
+
+    call getCost, ecx
+    mov edx, [player_coins]
+    cmp edx, eax
+    jb not_enough_money
+    sub edx, eax ;Subtract coins for spawning enity
+    mov [player_coins], edx 
+
     call getSubType, ecx
     
     cmp eax, 0
@@ -3763,8 +3788,26 @@ SpawnProjectileType:
         movzx eax, [@@x]
         call spawnProjectile, eax, ebx
         mov eax, 0 ; return 0 if the entity was spawned
-        ret
+    
+    ret
+not_enough_money:
+    ; return 1 if entity could not be spawned
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call convertGridCoordsToPixelPosition, eax, ebx
+    mov edx, TILE_WIDTH
+    mov edi, TILE_HEIGHT
+    mov ecx, 4 ; red color
+    call drawColoredRectangle, eax, ebx, edx, edi, ecx
+    ; Print melding
+    call setCursorPosition, 2, 0
+    mov edx, offset msg_no_coins
+    call printString, edx
 
+    mov eax, 1
+    ret
+position_not_free:
+    ret
 ENDP spawnEntityType
 
 ; function to find a free spot in the 9th column and spawn the entity
@@ -3772,6 +3815,13 @@ PROC findFreeSpotLastColumn
     ARG @@entityType:BYTE RETURNS eax
     LOCAL @@count:BYTE
     USES ebx, ecx, edx, esi, edi
+    
+    ; ; Check if the entity type is -1 or 255
+    movzx eax, [@@entityType]
+    cmp eax, -1
+    je no_entity_spawn
+    cmp eax, 255
+    je no_entity_spawn
 
     call rand5
 
@@ -3803,9 +3853,12 @@ found_free_spot:
     ; This is a placeholder spawn logic
     movzx eax, [@@entityType]
     add eax, 10
-    ; call printDecimalWithoutNewLine, eax
+    
     call spawnEntityType, ecx, edx, eax
     mov eax, 0  ; Success
+    ret
+no_entity_spawn:
+    mov eax, 0
     ret
 ; Call drawSpritePartial to draw a part of the sprite
 ENDP findFreeSpotLastColumn
@@ -4129,7 +4182,73 @@ done_shop:
     ret
 ENDP drawShopInterface
 
+PROC displayCoins
+    USES eax, ebx, ecx, edx
 
+    call setCursorPosition, 18, 0
+    mov edx, offset msg_coins
+    call printString, edx
+    mov eax, [player_coins]
+    call setCursorPosition, 19, 0
+    call printDecimal, eax
+
+    ret
+ENDP displayCoins
+
+; getCost
+; Berekent de kost van een entiteit op basis van type (in AL)
+; Returns EAX = cost
+PROC getCost
+    ARG @@type:BYTE RETURNS eax
+    USES ebx, ecx, edx
+
+    movzx eax, [@@type]
+    call getMainType, eax
+    cmp al, 0
+    jne no_cost ; enkel mainType=0 (planten) hebben een kost
+
+    ; mainType=0 => plant
+    ; nu subType opvragen
+    movzx eax, [@@type]
+    call getSubType, eax
+
+    cmp al, 0
+        je get_cost_default_plant
+        cmp al, 1
+        je get_cost_potato
+        cmp al, 2
+        je get_cost_bigger_potato
+        cmp al, 3
+        je get_cost_bigger_plant
+        cmp al, 4
+        je get_cost_biggest_plant
+    
+        jmp no_cost
+    
+    get_cost_default_plant:
+        movzx eax, [cost_default_plant]
+        ret
+    
+    get_cost_potato:
+        movzx eax, [cost_potato]
+        ret
+    
+    get_cost_bigger_potato:
+        movzx eax, [cost_bigger_potato]
+        ret
+    
+    get_cost_bigger_plant:
+        movzx eax, [cost_bigger_plant]
+        ret
+    
+    get_cost_biggest_plant:
+        movzx eax, [cost_biggest_plant]
+        ret
+    
+    no_cost:
+        mov eax, 0
+        ret
+ENDP getCost
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
 PROC main
@@ -4302,6 +4421,16 @@ DATASEG
     mouseY  dd 0
 
     selected_shop db -1
+    cost_default_plant db 50
+    cost_potato db 25
+    cost_bigger_potato db 75
+    cost_bigger_plant db 100
+    cost_biggest_plant db 150
+    
+    player_coins dd 300   ; Start with 200 
+    msg_coins db "Coins:", '$'
+    msg_no_coins db "Skere tijden", 13, 10, "$"
+
     REGION_x_min       EQU 0
     REGION_x_max       EQU 2
     REGION_y_min       EQU 4
