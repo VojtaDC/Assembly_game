@@ -1712,7 +1712,7 @@ PROC inflictDamageToDynamicEntityFromGrid
             movzx ebx, [@@y]
             call removeDynamicEntity, eax, ebx
                 mov eax, [player_coins]
-                add eax, dead_zombie_reward
+                add eax, [dead_zombie_reward]
                 mov [player_coins], eax
 
         no_remove_entity:
@@ -1989,9 +1989,18 @@ PROC handleZombieMovement
         remove_zombie_movement:
             mov al, [@@x]
             call removeDynamicEntity, eax, ebx
+
+            mov eax, [player_hearts]
+            dec eax
+            mov [player_hearts], eax
+            cmp eax, 0
+            je show_game_over
+
             mov eax, 0
             ret
-
+        show_game_over:
+            call showGameOverScreen
+            ret
 ENDP handleZombieMovement
 
 ; **COLLISION DETECTION**
@@ -2866,6 +2875,7 @@ PROC renderFrame
     call drawColoredRectangle, 0, 0, 50, 200, 0 ; draw the left side of the screen
     call drawShopInterface
     call displayCoins
+    call displayHearts
 
     call ShowCursor ; show the mouse cursor on the screen
 
@@ -2954,7 +2964,7 @@ ENDP mouse_install
 
 PROC ShowCursor
     USES eax
-
+    
     mov ax, 1
     int 33h
 
@@ -3072,6 +3082,7 @@ PROC getMouseCoordinates
 
     mov [mouseX], ecx
     mov [mouseY], edx
+    call printMouseCoordinates, ecx, edx
 
     ret
 ENDP getMouseCoordinates
@@ -3544,7 +3555,7 @@ ENDP displayLevelName
 PROC displayWaveNumber
     USES eax, ebx, ecx, edx
 
-    call setCursorPosition, 1, 1
+    call setCursorPosition, 2, 2
 
     ; get the current wave number
     mov ebx, [current_level]
@@ -3552,9 +3563,9 @@ PROC displayWaveNumber
     inc eax
     movzx ecx, [ebx + LEVEL.waves_count]
     call printDecimalWithoutNewLine, eax
-    call setCursorPosition, 1, 2
+    call setCursorPosition, 2, 3
     call printString, offset msg_wave_interval
-    call setCursorPosition, 1, 3
+    call setCursorPosition, 2, 4
 
     ; print the total number of waves
     call printDecimalWithoutNewLine, ecx
@@ -3910,6 +3921,25 @@ PROC handleEntitySpawning
 
 ENDP handleEntitySpawning
 
+PROC spawnStartingEntities
+
+    call spawnDefaultZombie, 8, 0
+    call spawnDefaultZombie, 7, 0
+    call spawnDefaultZombie, 6, 0
+    ; call spawnDefaultZombie, 8, 1
+    ; call spawnDefaultZombie, 8, 2
+    ; call spawnDefaultZombie, 8, 3
+    ; call spawnDefaultZombie, 8, 4
+
+    ; call spawnDefaultPlant, 0, 0
+    call spawnDefaultPlant, 0, 1
+    call spawnDefaultPlant, 0, 2
+    call spawnPotato, 5, 3
+    call spawnBiggerPotato, 5, 4
+    call spawnBiggerPlant, 0, 3
+    call spawnBiggestPlant, 0, 4
+    ret
+ENDP spawnStartingEntities
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
 ; Interface functions
@@ -4185,12 +4215,13 @@ ENDP drawShopInterface
 PROC displayCoins
     USES eax, ebx, ecx, edx
 
-    call setCursorPosition, 18, 0
-    mov edx, offset msg_coins
-    call printString, edx
+    ; call setCursorPosition, 19, 0
+    ; mov edx, offset msg_coins
+    ; call printString, edx
     mov eax, [player_coins]
-    call setCursorPosition, 19, 0
+    call setCursorPosition, 20, 2
     call printDecimal, eax
+    call drawCoin, 5, 158 
 
     ret
 ENDP displayCoins
@@ -4249,6 +4280,281 @@ PROC getCost
         mov eax, 0
         ret
 ENDP getCost
+
+PROC showGameOverScreen
+    USES eax, ebx, ecx, edx, esi, edi
+
+    call stopMusic
+
+    ; Make black background
+    call fillBackgroundFaster, 0
+
+    ;Print Game Over and instructions for reset/exit
+    call setCursorPosition, 10, 16
+    mov edx, offset msg_gameover
+    call printString, edx
+
+    call setCursorPosition, 12, 10
+    mov edx, offset msg_restart_instructions_restart
+    call printString, edx
+    call setCursorPosition, 13, 10
+    mov edx, offset msg_restart_instructions_exit
+    call printString, edx
+
+GameOverInputLoop:
+
+    ; Check ESC key
+    call checkForSpecificKeystroke, 001Bh ; ESC
+
+    ; Check 'R' key to Restart
+    mov ah, 01h
+    int 16h
+    jz no_key_pressed_gameover
+    
+    mov ah, 00h
+    int 16h
+    cmp al, 'r'
+    jne not_R_key
+    
+    ; 'R' was pressed --> restart game
+    call restartGame
+    ret
+
+not_R_key:
+    
+    ;Neglect other keys
+    jmp GameOverInputLoop
+
+no_key_pressed_gameover:
+    ; Option to add buttons
+    ; call handleMouseClick
+    jmp GameOverInputLoop
+
+ENDP showGameOverScreen
+
+;Restarts game (after GAME OVER)
+PROC restartGame
+    USES eax, ebx, ecx, edx, esi, edi
+
+    ;Reset variables
+    mov [free_index], 0
+    mov [current_level_index], 0
+    mov [current_level], offset level1_instance
+    mov [current_wave], 0
+    mov [current_entity], 0
+    mov [spawn_counter], 0
+    mov [player_coins], 300
+    mov [player_hearts], 3
+    mov [elapsed_time], 0
+
+
+    ;Reset grid, dynamic_grid and dynamic_entities_array
+    mov edi, offset grid
+    mov eax, ENTITY_SIZE
+    imul eax, COLUMNS
+    imul eax, ROWS
+    mov ecx, eax
+    mov al, -1
+    rep stosb
+
+    mov edi, offset dynamic_grid
+    mov eax, COLUMNS
+    imul eax, ROWS
+    mov ecx, eax
+    xor eax, eax
+    mov al, -1
+    rep stosb
+
+    mov edi, offset dynamic_entities_array
+    mov eax, ENTITY_SIZE
+    imul eax, MAX_ENTITIES
+    mov ecx, eax
+    xor eax, eax
+    mov al, -1
+    rep stosb
+
+    
+    call startMusic
+    call startTime
+    call spawnStartingEntities
+    
+    ret
+ENDP restartGame
+
+Draws a red heart
+PROC drawHeart
+    ARG @@x0:WORD, @@y0:WORD
+    USES eax, ebx, ecx, edx, edi, esi
+
+    movzx eax, [@@x0]
+    movzx ebx, [@@y0]
+    mov ecx, 12 ; rood
+
+    ; Row0: consist of two rectangles (x+2,y), w=2 and (x+6,y), w=2
+    movzx eax, [@@x0]
+    add eax, 2
+    movzx edx, [@@y0]
+    call drawColoredRectangle, eax, edx, 2, 1, ecx
+
+    movzx eax, [@@x0]
+    add eax, 6
+    movzx edx, [@@y0]
+    call drawColoredRectangle, eax, edx, 2, 1, ecx
+
+    ; Row1: (x+1, y+1), w=8
+    movzx eax, [@@x0]
+    add eax, 1
+    movzx ebx, [@@y0]
+    add ebx, 1
+    call drawColoredRectangle, eax, ebx, 8, 1, ecx
+
+    ; Row2: (x+0, y+2), w=10
+    movzx eax, [@@x0]
+    movzx ebx, [@@y0]
+    add ebx, 2
+    call drawColoredRectangle, eax, ebx, 10, 1, ecx
+
+    ; Row3: (x+0, y+3), w=10
+    movzx eax, [@@x0]
+    movzx ebx, [@@y0]
+    add ebx, 3
+    call drawColoredRectangle, eax, ebx, 10, 1, ecx
+
+    ; Row4: (x+0, y+4), w=10
+    movzx eax, [@@x0]
+    movzx ebx, [@@y0]
+    add ebx, 4
+    call drawColoredRectangle, eax, ebx, 10, 1, ecx
+
+    ; Row5: (x+1, y+5), w=8
+    movzx eax, [@@x0]
+    add eax, 1
+    movzx ebx, [@@y0]
+    add ebx, 5
+    call drawColoredRectangle, eax, ebx, 8, 1, ecx
+
+    ; Row6: (x+2, y+6), w=6
+    movzx eax, [@@x0]
+    add eax, 2
+    movzx ebx, [@@y0]
+    add ebx, 6
+    call drawColoredRectangle, eax, ebx, 6, 1, ecx
+
+    ; Row7: (x+3, y+7), w=4
+    movzx eax, [@@x0]
+    add eax, 3
+    movzx ebx, [@@y0]
+    add ebx, 7
+    call drawColoredRectangle, eax, ebx, 4, 1, ecx
+
+    ; Row8: (x+4, y+8), w=2
+    movzx eax, [@@x0]
+    add eax, 4
+    movzx ebx, [@@y0]
+    add ebx, 8
+    call drawColoredRectangle, eax, ebx, 2, 1, ecx
+
+    ret
+ENDP drawHeart
+PROC displayHearts
+    USES eax, ebx, ecx, edx, esi, edi
+
+    mov eax, [player_hearts]
+    cmp eax, 0
+    je no_hearts
+
+    mov ebx, 6   ; start x
+    mov edx, 30  ; start y
+
+    mov ecx, eax
+draw_heart_loop:
+    push ecx
+    mov eax, ebx
+    call drawHeart, eax, edx
+    pop ecx
+    add ebx, 14
+    loop draw_heart_loop
+
+no_hearts:
+    ret
+ENDP displayHearts
+
+;Draw a yello (14) coin
+PROC drawCoin
+    ARG @@x0:WORD, @@y0:WORD
+    USES eax, ebx, ecx, edx, edi, esi
+
+    mov ecx, 14 ; yellow
+
+    ; Row0: (x+3, y+0), w=4
+    movzx eax, [@@x0]
+    add eax, 3
+    movzx edx, [@@y0]
+    call drawColoredRectangle, eax, edx, 4, 1, ecx
+
+    ; Row1: (x+2, y+1), w=6
+    movzx eax, [@@x0]
+    add eax, 2
+    movzx ebx, [@@y0]
+    add ebx, 1
+    call drawColoredRectangle, eax, ebx, 6, 1, ecx
+
+    ; Row2: (x+1, y+2), w=8
+    movzx eax, [@@x0]
+    add eax, 1
+    movzx ebx, [@@y0]
+    add ebx, 2
+    call drawColoredRectangle, eax, ebx, 8, 1, ecx
+
+    ; Row3: (x+1, y+3), w=8
+    movzx eax, [@@x0]
+    add eax, 1
+    movzx ebx, [@@y0]
+    add ebx, 3
+    call drawColoredRectangle, eax, ebx, 8, 1, ecx
+
+    ; Row4: (x+0, y+4), w=10
+    movzx eax, [@@x0]
+    movzx ebx, [@@y0]
+    add ebx, 4
+    call drawColoredRectangle, eax, ebx, 10, 1, ecx
+
+    ; Row5: (x+0, y+5), w=10
+    movzx eax, [@@x0]
+    movzx ebx, [@@y0]
+    add ebx, 5
+    call drawColoredRectangle, eax, ebx, 10, 1, ecx
+
+    ; Row6: (x+1, y+6), w=8
+    movzx eax, [@@x0]
+    add eax, 1
+    movzx ebx, [@@y0]
+    add ebx, 6
+    call drawColoredRectangle, eax, ebx, 8, 1, ecx
+
+    ; Row7: (x+1, y+7), w=8
+    movzx eax, [@@x0]
+    add eax, 1
+    movzx ebx, [@@y0]
+    add ebx, 7
+    call drawColoredRectangle, eax, ebx, 8, 1, ecx
+
+    ; Row8: (x+2, y+8), w=6
+    movzx eax, [@@x0]
+    add eax, 2
+    movzx ebx, [@@y0]
+    add ebx, 8
+    call drawColoredRectangle, eax, ebx, 6, 1, ecx
+
+    ; Row9: (x+3, y+9), w=4
+    movzx eax, [@@x0]
+    add eax, 3
+    movzx ebx, [@@y0]
+    add ebx, 9
+    call drawColoredRectangle, eax, ebx, 4, 1, ecx
+
+    ret
+ENDP drawCoin
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
 PROC main
@@ -4323,22 +4629,7 @@ PROC main
     call initializeRegion, 5, 25, 49, 116, 148, 1, 10
 
     
-    
-    
-    ; Spawn entities
-    ; call spawnDefaultZombie, 8, 0
-    ; call spawnDefaultZombie, 8, 1
-    ; call spawnDefaultZombie, 8, 2
-    ; call spawnDefaultZombie, 8, 3
-    ; call spawnDefaultZombie, 8, 4
-
-    call spawnDefaultPlant, 0, 0
-    call spawnDefaultPlant, 0, 1
-    call spawnDefaultPlant, 0, 2
-    call spawnPotato, 5, 3
-    call spawnBiggerPotato, 5, 4
-    call spawnBiggerPlant, 0, 3
-    call spawnBiggestPlant, 0, 4
+    call spawnStartingEntities
     call startTime
 
     ; Main game loop
@@ -4357,8 +4648,7 @@ PROC main
     call checkAndResetTimer
 
     ;call incrementSpawnCounter
-    ;
-    
+
     ; Check for ESC key to exit
     call    checkForSpecificKeystroke, 001Bh
     jmp     @@gameLoop
@@ -4430,7 +4720,20 @@ DATASEG
     
     player_coins dd 300   ; Start with 200 
     msg_coins db "Coins:", '$'
-    msg_no_coins db "Skere tijden", 13, 10, "$"
+    msg_no_coins db "Broke times", 13, 10, "$"
+
+    player_hearts dd 3
+    msg_gameover db "GAME OVER", "$"
+    msg_game_over db "GAME OVER", 13,10,'$',0
+    msg_restart_instructions_restart db "Press 'R'   to restart",13,10,'$',0
+    msg_restart_instructions_exit db "      'ESC' to exit",13,10,'$',0
+
+    msg_menu_restart db "Restart", "$"
+    msg_menu_exit db "Exit", "$"
+    msg_pause_menu db "Paused - Choose an option", "$"
+    msg_pause_restart db "Restart Game", "$"
+    msg_pause_setlevel db "Set Level", "$"
+    msg_pause_return db "Return to Game", "$"
 
     REGION_x_min       EQU 0
     REGION_x_max       EQU 2
@@ -4470,7 +4773,7 @@ DATASEG
     spawn_counter db 0
 
     ; Level 1
-    level1_name db "Level 1", '$'
+    level1_name db "Level1", '$'
     level1_wave1 db -1, -1, 0, -1, 0, -1, -1, -1, 0, -1, -1, -1, 0, -1, -1
     level1_wave2 db -1, -1, 0, 0, -1, -1, -1, 0, -1, 0, -1, -1, -1, 0, -1
     level1_wave3 db -1, -1, -1, 0, -1, -1, -1, -1, 0, -1, -1, -1, 0, -1, -1
@@ -4479,7 +4782,7 @@ DATASEG
 
 
     ; Level 2
-    level2_name db "Level 2", '$'
+    level2_name db "Level2", '$'
     level2_wave1 db 0, -1, 0, -1, 0, -1, 0, -1, -1, 0, -1, 0, -1, -1, -1
     level2_wave2 db -1, 0, 1, -1, 0, -1, 0, 1, -1, 0, -1, -1, 0, -1, -1
     level2_wave3 db -1, 0, 0, -1, 1, -1, 0, -1, -1, 0, 0, -1, 1, -1, 0
@@ -4488,7 +4791,7 @@ DATASEG
     level2_instance LEVEL <offset level2_name, 4, level2_waves>
 
     ; Level 3
-    level3_name db "Level 3", '$'
+    level3_name db "Level3", '$'
     level3_wave1 db -1, 0, 0, -1, 1, -1, 0, 0, -1, 0, -1, 1, 0, -1, 0
     level3_wave2 db 0, 1, 1, -1, 0, -1, -1, 2, 1, -1, 0, -1, 0, -1, 1
     level3_wave3 db 0, 1, -1, -1, 1, -1, 0, -1, -1, 0, -1, 2, 0, -1, 1
@@ -4496,14 +4799,14 @@ DATASEG
     level3_instance LEVEL <offset level3_name, 3, level3_waves>
 
     ; Level 4
-    level4_name db "Level 4", '$'
+    level4_name db "Level4", '$'
     level4_wave1 db 0, 1, 0, -1, 0, 1, 2, -1, 0, 1, 0, -1, 1, -1, 2
     level4_wave2 db 0, 2, -1, 1, 0, -1, 2, 1, 0, -1, 0, 2, -1, 1, 1
     level4_waves dd offset level4_wave1, offset level4_wave2
     level4_instance LEVEL <offset level4_name, 2, level4_waves>
 
     ; Level 5
-    level5_name db "Level 5", '$'
+    level5_name db "Level5", '$'
     level5_wave1 db 0, 0, 2, -1, 2, -1, 1, 2, -1, 0, -1, 2, 0, -1, 1
     level5_wave2 db 1, 2, -1, 1, 1, 2, -1, 0, 2, -1, 0, 2, 1, -1, 1
     level5_wave3 db 0, 2, 1, -1, 1, -1, 0, -1, 2, -1, 0, 1, 2, 1, -1
@@ -4511,21 +4814,21 @@ DATASEG
     level5_instance LEVEL <offset level5_name, 3, level5_waves>
 
     ; Level 6
-    level6_name db "Level 6", '$'
+    level6_name db "Level6", '$'
     level6_wave1 db 2, 1, 1, -1, 0, 2, 1, -1, 1, 2, -1, 2, 0, 1, 2
     level6_wave2 db 2, 1, -1, 2, 2, -1, 1, 0, 2, -1, 2, 1, -1, 2, 1
     level6_waves dd offset level6_wave1, offset level6_wave2
     level6_instance LEVEL <offset level6_name, 2, level6_waves>
 
     ; Level 7
-    level7_name db "Level 7", '$'
+    level7_name db "Level7", '$'
     level7_wave1 db 2, 2, 1, 2, 2, 1, 2, 1, 1, 2, 2, 1, 1, 2, 2
     level7_wave2 db 2, 2, 1, 2, 2, 1, 2, 2, 1, 2, 2, 1, 2, 2, 1
     level7_waves dd offset level7_wave1, offset level7_wave2
     level7_instance LEVEL <offset level7_name, 2, level7_waves>
 
     ; Level 8
-    level8_name db "Level 8", '$'
+    level8_name db "Level8", '$'
     level8_wave1 db 2, 2, 2, 1, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2
     level8_wave2 db 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
     level8_waves dd offset level8_wave1, offset level8_wave2
