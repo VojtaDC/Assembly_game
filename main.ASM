@@ -1440,9 +1440,6 @@ PROC inflictDamageToDynamicEntityFromArray
     ; get the health of the entity
     ; subtract the damage from the health
     ; if the health is less than or equal to 0, remove the entity
-    mov eax, [player_coins]
-    add eax, 5
-    mov [player_coins], eax
 
     xor eax, eax
     mov edi, offset dynamic_entities_array
@@ -1714,6 +1711,9 @@ PROC inflictDamageToDynamicEntityFromGrid
             movzx eax, [@@x]
             movzx ebx, [@@y]
             call removeDynamicEntity, eax, ebx
+                mov eax, [player_coins]
+                add eax, dead_zombie_reward
+                mov [player_coins], eax
 
         no_remove_entity:
 
@@ -4426,6 +4426,7 @@ DATASEG
     cost_bigger_potato db 75
     cost_bigger_plant db 100
     cost_biggest_plant db 150
+    dead_zombie_reward dd 20
     
     player_coins dd 300   ; Start with 200 
     msg_coins db "Coins:", '$'
