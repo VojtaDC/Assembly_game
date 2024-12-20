@@ -4381,7 +4381,7 @@ PROC restartGame
     ret
 ENDP restartGame
 
-Draws a red heart
+; Draws a red heart
 PROC drawHeart
     ARG @@x0:WORD, @@y0:WORD
     USES eax, ebx, ecx, edx, edi, esi
