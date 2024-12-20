@@ -439,7 +439,10 @@ ENDP waitForSpecificKeystroke
 ; Terminate the program.
 PROC terminateProcess
 	USES eax
+    cmp [musicPlaying], 0
+    je music_already_stopped
     call stopMusic
+    music_already_stopped:
 	call setVideoMode, 03h
 	mov	ax,04C00h
 	int 21h
@@ -3501,6 +3504,7 @@ PROC startMusic
         pushad
         call openFile, offset sound_file
         mov [sndhandle], ax
+        mov [musicPlaying], 1
 
         call reset_dsp	
         call turn_speaker_on
@@ -3525,6 +3529,7 @@ PROC stopMusic
 	call disable_irq_7
 	call turn_speaker_off
 	call closeFile, [sndhandle]
+    mov [musicPlaying], 0
 	popad
 	ret
 ENDP stopMusic
@@ -4911,7 +4916,7 @@ DATASEG
 
     sound_file db "audio/loop.RAW", 0
 	buffhalf db 1	; what buffer half has to be copied
-	
+	musicPlaying db 0
 	readbusy dw 0	; if busy reading something else
 	readfail dw 0 	; signal if interrupt was called during busy time
 	
