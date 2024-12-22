@@ -32,7 +32,7 @@ BUTTONSIZE EQU BUTTONWIDTH*BUTTONHEIGHT
 TILE_WIDTH EQU 30
 TILE_HEIGHT EQU 40
 SHOP_WIDTH EQU 50 
-NUM_REGIONS EQU 6
+NUM_REGIONS EQU 7
 
 FIRETIMER EQU 25
 FIREINTERVAL EQU 100        
@@ -550,35 +550,6 @@ PROC setCursorPosition
 
     ret
 ENDP setCursorPosition
-
-; function to print decimal without new line
-PROC printDecimalNoNewLine
-    ARG @@number:DWORD
-    USES eax, ebx, ecx, edx
-
-            mov	eax, [@@number]
-            mov ebx, 10
-            xor ecx, ecx
-
-        getNextDigitn:
-            inc ecx
-            xor edx, edx
-            div ebx
-            push dx ; store remainder on stack
-            test eax, eax ; if zero, last digit
-            jnz	getNextDigitn
-
-            mov ah, 02h
-        printDigitsn:
-            pop dx
-            add dl, '0'
-            int 21h
-            loop printDigitsn
-
-            ret
-
-ENDP printDecimalNoNewLine
-
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
 ; functions for the grid
@@ -751,7 +722,7 @@ PROC printStaticEntityState
     get_values_loop_static:
         xor eax, eax
         lodsb
-        call printDecimalNoNewLine, eax
+        call printDecimalWithoutNewLine, eax
         loop get_values_loop_static
 
         ret
@@ -1057,7 +1028,7 @@ PROC printDynamicEntityStateFromArray
         
         get_values_loop:
             lodsb
-            call printDecimalNoNewLine, eax
+            call printDecimalWithoutNewLine, eax
             loop get_values_loop
 
 
@@ -4023,6 +3994,13 @@ PROC ShopSolver
 ENDP ShopSolver
 
 PROC MenuSolver
+    mov al, [esi + REGION.sub_type]
+    call printDecimalWithoutNewLine, eax
+    cmp al, 9
+    jne no_menu_action
+    call stopMusic
+    call restartGame
+    no_menu_action:
     ret
 ENDP MenuSolver 
 
@@ -4095,11 +4073,6 @@ draw_shop_loop:
     cmp ecx, 0
     je done_shop
 
-    ; Check if this is a shop region (region_type = 1)
-    mov al, [esi + REGION.region_type]
-    cmp al, 1
-    jne not_shop_region
-
     ; Read coordinates of the region
     movzx eax, [esi + REGION.x_min]  ; eax = x_min
     movzx edx, [esi + REGION.x_max]  ; edx = x_max
@@ -4115,7 +4088,15 @@ draw_shop_loop:
 
     ; Read the sub_type to determine which item (zombie/plant/...)
     movzx ebp, [esi + REGION.sub_type]  ; ebp = sub_type
-    
+
+    ; Check if this is a shop region (region_type = 1)
+    cmp [esi + REGION.region_type], 1
+    je shop_region
+    cmp [esi + REGION.region_type], 0
+    je menu_region
+    jmp not_shop_region
+
+shop_region:
     ;save eax
     push eax
     call getMainType, ebp
@@ -4129,7 +4110,14 @@ draw_shop_loop:
     pop eax
     ;restore eax and go to next region
     jmp not_shop_region
-    
+menu_region:
+    push eax
+    call getSubType, ebp
+    cmp eax, 9
+    je reset_button
+    pop eax
+    ;restore eax and go to next region
+    jmp not_shop_region
 
 zombie_button:
     pop eax
@@ -4142,6 +4130,16 @@ zombie_button:
     pop ecx ; Restore color value
 
     call drawSprite, offset button6, VMEMADR, eax, ebx
+    jmp after_entity_draw
+
+reset_button:
+    pop eax
+    mov ecx, 1  ; blue tint 
+    push ecx ; Save color value
+    call drawColoredRectangle, eax, ebx, edx, edi, ecx
+    pop ecx ; Restore color value
+    call setCursorPosition, 22, 1
+    call printString, offset msg_game_reset
     jmp after_entity_draw
 
 plant_button:
@@ -4164,6 +4162,7 @@ plant_button:
     cmp al, 4
     je SHORT draw_biggest_plant_button
     jmp SHORT after_entity_draw
+
 
 draw_plant_button:
     movzx eax, [esi + REGION.x_min] 
@@ -4340,7 +4339,7 @@ ENDP showGameOverScreen
 ;Restarts game (after GAME OVER)
 PROC restartGame
     USES eax, ebx, ecx, edx, esi, edi
-
+    
     ;Reset variables
     mov [free_index], 0
     mov [current_level_index], 0
@@ -4623,8 +4622,7 @@ PROC main
     lea eax, [button6+8]
     call ReadFile, offset button_file6, eax, DATASIZE
     
-    ; Initialize first region (regionIndex = 0) 
-    ;updateRegionCell args: regionIndex, fieldOffset, value, size
+    ; Initialize regions arguments: @@regionIndex:BYTE, @@x_min:WORD, @@x_max:WORD, @@y_min:WORD, @@y_max:WORD, @@region_type:BYTE, @@sub_type:BYTE
 
     call initializeRegion, 0, 0, 24, 50, 82, 1, 00
     call initializeRegion, 1, 0, 24, 83, 115, 1, 03
@@ -4632,6 +4630,7 @@ PROC main
     call initializeRegion, 3, 25, 49, 50, 82, 1, 01
     call initializeRegion, 4, 25, 49, 83, 115, 1, 02
     call initializeRegion, 5, 25, 49, 116, 148, 1, 10
+    call initializeRegion, 6, 5, 47, 172, 186, 0, 9
 
     
     call spawnStartingEntities
@@ -4702,7 +4701,6 @@ DATASEG
     msg_type db "free index is", 10, 13, "$"
 
     msg_no_mouse    db 'No mouse found!', 0dh, 0ah, '$'
-
     msg_test    db 'Test $'
 
     msg_wave_interval db "/", '$'
@@ -4727,7 +4725,7 @@ DATASEG
     msg_coins db "Coins:", '$'
     msg_no_coins db "Broke times", 13, 10, "$"
 
-    player_hearts dd 3
+    player_hearts dd 2
     msg_gameover db "GAME OVER", "$"
     msg_game_over db "GAME OVER", 13,10,'$',0
     msg_restart_instructions_restart db "Press 'R'   to restart",13,10,'$',0
@@ -4735,6 +4733,7 @@ DATASEG
 
     msg_menu_restart db "Restart", "$"
     msg_menu_exit db "Exit", "$"
+    msg_game_reset db "RESET", 0Dh, 0Ah, "$"
     msg_pause_menu db "Paused - Choose an option", "$"
     msg_pause_restart db "Restart Game", "$"
     msg_pause_setlevel db "Set Level", "$"
@@ -4913,13 +4912,11 @@ DATASEG
  
 
     ; AUDIO
-
     sound_file db "audio/loop.RAW", 0
 	buffhalf db 1	; what buffer half has to be copied
 	musicPlaying db 0
 	readbusy dw 0	; if busy reading something else
 	readfail dw 0 	; signal if interrupt was called during busy time
-	
     
 ; -------------------------------------------------------------------
 ; STACK
