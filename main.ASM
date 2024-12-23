@@ -3,8 +3,8 @@
 ; 32-bit x86 assembly language
 ; TASM
 ;
-; author:	David Blinder, Stijn Bettens
-; date:		23/10/2018
+; authors:	Tugay ülger, Vojtech De Coninck
+; date:		23/12/2024
 ; program:	Video mode 13h
 ; -------------------------------------------------------------------
 
@@ -15,52 +15,51 @@ ASSUME cs:_TEXT,ds:FLAT,es:FLAT,fs:FLAT,gs:FLAT
 
 ; compile-time constants (with macros)
 VMEMADR EQU 0A0000h	; video memory address
-SCRWIDTH EQU 320	; screen witdth
+SCRWIDTH EQU 320	; screen width
 SCRHEIGHT EQU 200	; screen height
 ROWS EQU 5 		; number of rows
 COLUMNS EQU 10		; number of columns
 VISIBLE_COLUMNS EQU 9 ; number of columns that are visible
-BMP_HEADER_SIZE equ 54
+BMP_HEADER_SIZE equ 54 ; size of BMP header
 
-SPRITEWIDTH EQU 30
-SPRITEHEIGHT EQU 40
-DATASIZE EQU SPRITEWIDTH*SPRITEHEIGHT;bytes of data in file
-BUTTONWIDTH EQU 25
-BUTTONHEIGHT EQU 33
-BUTTONSIZE EQU BUTTONWIDTH*BUTTONHEIGHT
+SPRITEWIDTH EQU 30 ; width of sprite
+SPRITEHEIGHT EQU 40 ; height of sprite
+DATASIZE EQU SPRITEWIDTH*SPRITEHEIGHT ; bytes of data in file
+BUTTONWIDTH EQU 25 ; width of button
+BUTTONHEIGHT EQU 33 ; height of button
+BUTTONSIZE EQU BUTTONWIDTH*BUTTONHEIGHT ; size of button
 
-TILE_WIDTH EQU 30
-TILE_HEIGHT EQU 40
-SHOP_WIDTH EQU 50 
-NUM_REGIONS EQU 7
+TILE_WIDTH EQU 30 ; width of a tile
+TILE_HEIGHT EQU 40 ; height of a tile
+SHOP_WIDTH EQU 50 ; width of the shop area
+NUM_REGIONS EQU 7 ; number of regions
 
-FIRETIMER EQU 25
-FIREINTERVAL EQU 100        
-ENTITY_SIZE EQU 12
-ENTITY_BIAS EQU 11
-MAX_ENTITIES EQU 100
-SPAWN_INTERVAL EQU 100
-LEVELS_COUNT EQU 8
+FIRETIMER EQU 25 ; fire timer value
+FIREINTERVAL EQU 100 ; fire interval value
+ENTITY_SIZE EQU 12 ; size of an entity
+ENTITY_BIAS EQU 11 ; entity bias value
+MAX_ENTITIES EQU 100 ; maximum number of entities
+SPAWN_INTERVAL EQU 100 ; spawn interval value
+LEVELS_COUNT EQU 8 ; number of levels
 
-SB_BASE equ 220h
-SB_IRQ equ 7
-SB_DMA equ 1
-INT_NUMBER equ 0fh
-SND_BUFF_SIZE EQU 8192
-LOOPING_AUDIO_LENGTH EQU 52
+SB_BASE equ 220h ; Sound Blaster base address
+SB_IRQ equ 7 ; Sound Blaster IRQ
+SB_DMA equ 1 ; Sound Blaster DMA channel
+INT_NUMBER equ 0fh ; interrupt number
+SND_BUFF_SIZE EQU 8192 ; sound buffer size
+LOOPING_AUDIO_LENGTH EQU 52 ; length of looping audio
 
-RAND_A = 1103515245
-RAND_C = 12345
+RAND_A = 1103515245 ; multiplier for random number generator
+RAND_C = 12345 ; increment for random number generator
 
 UDATASEG
-    rand_seed   dd ?
-
-    buffer_start dd ?
-	sound_buffer db 2 * SND_BUFF_SIZE dup (?) ; sound data buffer
-	
-	sndhandle dw ?
+    rand_seed   dd ? ; random seed
+    buffer_start dd ? ; buffer start address
+    sound_buffer db 2 * SND_BUFF_SIZE dup (?) ; sound data buffer
+    sndhandle dw ? ; sound handle
 
 ; -------------------------------------------------------------------
+
 CODESEG
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
@@ -176,9 +175,6 @@ PROC convertXtoPixelPosition
     mul bl ; multiply x by 30
     add eax, 50 ; offset of the left side of the screen
     add eax, 30 ; get the right side of the entity
-
-
-
     ret
 
 ENDP convertXtoPixelPosition
@@ -550,67 +546,60 @@ PROC setCursorPosition
 
     ret
 ENDP setCursorPosition
-; --------------------------------------------------------------------------------------------------------------------------------------
+; ----------------------------------------------------------------------
+; Functions for the grid
+; ----------------------------------------------------------------------
 
-; functions for the grid
-
-; --------------------------------------------------------------------------------------------------------------------------------------
-
-; print grid to screen in text mode
+; Print grid to screen in text mode
 PROC printGrid
     ARG @@bias:BYTE, @@grid:DWORD
     USES eax, ebx, ecx, edx
 
-    ; iterate over rows
-    ; for each row iterate over columns
-    ; print the value of the grid at the current row and column
+    ; Initialize pointers and counters
+    mov esi, [@@grid]       ; Set ESI to point to the grid array
+    mov cx, ROWS            ; Set CX to the number of rows
+    mov dx, COLUMNS         ; Set DX to the number of columns
 
-    mov esi, [@@grid]               ; Set ESI to point to the grid array
-    mov cx, ROWS                    ; Set CX to the number of rows
-    mov dx, COLUMNS                 ; Set DX to the number of columns
+outer_loop_draw:
+    push cx                 ; Save outer loop counter
+    mov cx, dx              ; Set inner loop counter
 
-    outer_loop_draw:
-        push cx                         ; Save outer loop counter
-        mov cx, dx                      ; Set inner loop counter
+inner_loop_draw:
+    lodsb                   ; Load byte at [ESI] into AL and increment ESI
+    mov bl, [@@bias]
+    add esi, ebx
+    cmp al, -1              ; Compare AL with -1
+    je print_zero           ; Jump if equal
+    add al, '0'             ; Convert to ASCII
+    jmp print_char          ; Jump to print_char
 
-    inner_loop_draw:
-        lodsb                           ; Load byte at [ESI] into AL and increment ESI
-        mov bl, [@@bias]
-        add esi, ebx
-        cmp al, -1                       ; Compare AL with zero
-        je print_zero                   ; If zero, jump to print_zero
-        add al, '0'                     ; Otherwise, set AL to the ASCII value of the digit
-        jmp print_char                  ; Jump to print_char
+print_zero:
+    mov al, ':'             ; Set AL to ':'
 
-    print_zero:
-        mov al, ':'                     ; Set AL to '0'
-        ;call printDecimal, al
+print_char:
+    mov ah, 0Eh             ; BIOS teletype function
+    int 10h                 ; Call BIOS interrupt to print character
+    loop inner_loop_draw    ; Repeat for each column
 
-    print_char:
-        mov ah, 0Eh                     ; BIOS teletype function
-        int 10h                         ; Call BIOS interrupt to print character
-        ;call printDecimal, eax
-        loop inner_loop_draw            ; Repeat for each column
+    ; Print newline
+    mov al, 0Dh             ; Carriage return
+    int 10h
+    mov al, 0Ah             ; Line feed
+    int 10h
 
-        ; Print newline
-        mov al, 0Dh                     ; Carriage return
-        int 10h                         ; Call BIOS interrupt to print character
-        mov al, 0Ah                     ; Line feed
-        int 10h                         ; Call BIOS interrupt to print character
+    pop cx                  ; Restore outer loop counter
+    loop outer_loop_draw    ; Repeat for each row
 
-        pop cx                          ; Restore outer loop counter
-        loop outer_loop_draw            ; Repeat for each row
+    ; Print newline
+    mov al, 0Dh             ; Carriage return
+    int 10h
+    mov al, 0Ah             ; Line feed
+    int 10h
 
-        ; Print newline
-        mov al, 0Dh                     ; Carriage return
-        int 10h                         ; Call BIOS interrupt to print character
-        mov al, 0Ah                     ; Line feed
-        int 10h                         ; Call BIOS interrupt to print character
-
-        ret
+    ret
 ENDP printGrid
 
-; change content of a cell in the grid
+; Change content of a cell in the grid
 PROC updateCell
     ARG @@x:BYTE, @@y:BYTE, @@value:BYTE, @@bias:BYTE, @@grid:DWORD
     USES eax, ebx, ecx, edx, esi, edi
@@ -620,9 +609,9 @@ PROC updateCell
     movzx eax, [@@y]
     imul eax, COLUMNS
     movzx ecx, [@@bias]
-    imul eax,  ecx; the size of the entity structure
+    imul eax, ecx            ; Size of the entity structure
     movzx ebx, [@@x]
-    imul ebx, ecx ; the size of the entity structure
+    imul ebx, ecx            ; Size of the entity structure
     add eax, ebx
 
     ; Set the value of the cell
@@ -631,7 +620,6 @@ PROC updateCell
     stosb
 
     ret
-
 ENDP updateCell
 
 ; Function to initialize a region with all necessary fields
@@ -639,28 +627,23 @@ PROC initializeRegion
     ARG @@regionIndex:BYTE, @@x_min:WORD, @@x_max:WORD, @@y_min:WORD, @@y_max:WORD, @@region_type:BYTE, @@sub_type:BYTE
     USES eax, ebx, ecx, edx, esi, edi
 
-    ; Initialize x_min
+    ; Initialize fields
     movzx eax, [@@regionIndex]
     movzx ebx, [@@x_min]
     call updateRegionCell, eax, REGION_x_min, ebx, 2
 
-    ; Initialize x_max
     movzx ebx, [@@x_max]
     call updateRegionCell, eax, REGION_x_max, ebx, 2
 
-    ; Initialize y_min
     movzx ebx, [@@y_min]
     call updateRegionCell, eax, REGION_y_min, ebx, 2
 
-    ; Initialize y_max
     movzx ebx, [@@y_max]
     call updateRegionCell, eax, REGION_y_max, ebx, 2
 
-    ; Initialize region_type
     movzx ebx, [@@region_type]
     call updateRegionCell, eax, REGION_region_type, ebx, 1
 
-    ; Initialize sub_type
     movzx ebx, [@@sub_type]
     call updateRegionCell, eax, REGION_sub_type, ebx, 1
 
@@ -672,276 +655,251 @@ PROC updateRegionCell
     ARG @@regionIndex:BYTE, @@fieldOffset:BYTE, @@value:BYTE, @@size:BYTE
     USES eax, ebx, ecx, edx, esi, edi
 
-        ; Calculate the address of the region field
-        mov esi, offset regions          ; Base address of regions array
-        movzx eax, [@@regionIndex]       ; Region index
-        imul eax, REGION_SIZE            ; Multiply by size of REGION struct
-        add esi, eax                     ; Move to the specific REGION struct
+    ; Calculate the address of the region field
+    mov esi, offset regions      ; Base address of regions array
+    movzx eax, [@@regionIndex]   ; Region index
+    imul eax, REGION_SIZE        ; Multiply by size of REGION struct
+    add esi, eax                 ; Move to the specific REGION struct
 
-        movzx ebx, [@@fieldOffset]       ; Field offset within the REGION struct
-        add esi, ebx                     ; Move to the specific field
+    movzx ebx, [@@fieldOffset]   ; Field offset within the REGION struct
+    add esi, ebx                 ; Move to the specific field
 
-        ; Store the value at the address
-        movzx eax, [@@value]             ; Value to store
-        movzx ecx, [@@size]              ; Size of the field (1 for BYTE, 2 for WORD)
-        cmp ecx, 1
-        je store_byte
-        cmp ecx, 2
-        je store_word
-        jmp end_updateRegionCell         ; If size is neither 1 nor 2, exit
+    ; Store the value at the address
+    movzx eax, [@@value]         ; Value to store
+    movzx ecx, [@@size]          ; Size of the field (1 for BYTE, 2 for WORD)
+    cmp ecx, 1
+    je store_byte
+    cmp ecx, 2
+    je store_word
+    jmp end_updateRegionCell     ; Exit if size is invalid
 
-    store_byte:
-        mov [esi], al
-        jmp end_updateRegionCell
+store_byte:
+    mov [esi], al
+    jmp end_updateRegionCell
 
-    store_word:
-        mov [esi], ax
-        jmp end_updateRegionCell
+store_word:
+    mov [esi], ax
+    jmp end_updateRegionCell
 
-    end_updateRegionCell:
-        ret
+end_updateRegionCell:
+    ret
 ENDP updateRegionCell
 
-
-; function that displays state of an entity in the grid
+; Function that displays state of an entity in the grid
 PROC printStaticEntityState
     ARG @@x:BYTE, @@y:BYTE
     USES eax, ebx, ecx, edx, esi
 
-        ; Calculate the offset of the cell in the grid
-        mov esi, offset grid
-        movzx eax, [@@y]
-        imul eax, COLUMNS
-        imul eax, ENTITY_SIZE
-        movzx ebx, [@@x]
-        imul ebx, ENTITY_SIZE
-        add eax, ebx
-        add esi, eax
-        mov ecx, ENTITY_SIZE
-        
-    get_values_loop_static:
-        xor eax, eax
-        lodsb
-        call printDecimalWithoutNewLine, eax
-        loop get_values_loop_static
+    ; Calculate the offset of the cell in the grid
+    mov esi, offset grid
+    movzx eax, [@@y]
+    imul eax, COLUMNS
+    imul eax, ENTITY_SIZE
+    movzx ebx, [@@x]
+    imul ebx, ENTITY_SIZE
+    add eax, ebx
+    add esi, eax
+    mov ecx, ENTITY_SIZE
 
-        ret
+get_values_loop_static:
+    xor eax, eax
+    lodsb
+    call printDecimalWithoutNewLine, eax
+    loop get_values_loop_static
 
+    ret
 ENDP printStaticEntityState
 
-; function that returns the type of an entity in the grid
+; Function that returns the type of an entity in the grid
 PROC getStaticEntityType
     ARG @@x:BYTE, @@y:BYTE RETURNS eax
     USES ebx, ecx, edx, esi
 
-        ; Calculate the offset of the cell in the grid
-        movzx eax, [@@x]
-        movzx ebx, [@@y]
-        call calculateEntityGridOffset, eax, ebx , offset grid
-        mov esi, eax
-        xor eax, eax
+    ; Calculate the offset of the cell in the grid
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call calculateEntityGridOffset, eax, ebx, offset grid
+    mov esi, eax
+    xor eax, eax
 
-        mov al, [esi]
+    mov al, [esi]
+    cmp al, -1
+    je unknown_entity_static
+    movzx eax, al
+    ret
 
-        cmp al, -1
-        je unknown_entity_static
-
-        movzx eax, al
-
-        ret
-
-    unknown_entity_static:
-        mov eax, 255
-
-        ret
-
+unknown_entity_static:
+    mov eax, 255
+    ret
 ENDP getStaticEntityType
 
-; function that initializes a static entity
+; Function that initializes a static entity
 PROC initializeStaticEntity
     ARG @@x:BYTE, @@y:BYTE, @@type:BYTE
     USES eax, ebx, ecx, edx, esi
 
-        movzx eax, [@@x]
-        movzx ebx, [@@y]
-        movzx ecx, [@@type]
-        call updateCell, eax, ebx, ecx, ENTITY_SIZE, offset grid
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    movzx ecx, [@@type]
+    call updateCell, eax, ebx, ecx, ENTITY_SIZE, offset grid
 
-        ret
-
+    ret
 ENDP initializeStaticEntity
 
-; function to remove static entity from the grid
+; Function to remove static entity from the grid
 PROC removeStaticEntity
     ARG @@x:BYTE, @@y:BYTE
     USES eax, ebx, ecx, edx, esi, edi
 
-        ; update the type to -1 in the grid
-        movzx eax, [@@x]
-        movzx ebx, [@@y]
-        call updateStaticEntityWithValue, eax, ebx, -1, 0
+    ; Update the type to -1 in the grid
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call updateStaticEntityWithValue, eax, ebx, -1, 0
 
-        ret
-
+    ret
 ENDP removeStaticEntity
 
-; function to update static entity variables
+; Function to update static entity variables
 PROC updateStaticEntityWithValues
-    ARG @@x:BYTE, @@y:BYTE, @@health:BYTE, @@damage:BYTE, @@speed:BYTE, @@direction:BYTE, @@animationFrame:BYTE, @@animationTimer:BYTE, @@spriteIndex:BYTE,  @@fireInterval:BYTE, @@fireTimer:BYTE
+    ARG @@x:BYTE, @@y:BYTE, @@health:BYTE, @@damage:BYTE, @@speed:BYTE, @@direction:BYTE, @@animationFrame:BYTE, @@animationTimer:BYTE, @@spriteIndex:BYTE, @@fireInterval:BYTE, @@fireTimer:BYTE
     USES eax, ebx, ecx, edx, edi, esi
 
-        movzx eax, [@@x]
-        movzx ebx, [@@y]
-        call calculateEntityGridOffset, eax, ebx , offset grid
-        
-        mov edi, eax
-        inc edi ; skip the type
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call calculateEntityGridOffset, eax, ebx, offset grid
 
-        mov al, [@@health]
-        stosb
+    mov edi, eax
+    inc edi                     ; Skip the type
 
-        mov al, [@@damage]
-        stosb
+    ; Update fields
+    mov al, [@@health]
+    stosb
+    mov al, [@@damage]
+    stosb
+    mov al, [@@speed]
+    stosb
 
-        mov al, [@@speed]
-        stosb
+    ; Convert x to pixel position and store the result
+    movzx eax, [@@x]
+    call convertXtoPixelPosition, eax
+    stosb                      ; Store as BYTE
 
-        ; Convert x to pixel position and store the result
-        movzx eax, [@@x]
-        call convertXtoPixelPosition, eax
-        stosb ; Store the result as a BYTE
+    mov al, [@@y]
+    stosb
+    mov al, [@@direction]
+    stosb
+    mov al, [@@animationFrame]
+    stosb
+    mov al, [@@animationTimer]
+    stosb
+    mov al, [@@spriteIndex]
+    stosb
+    mov al, [@@fireInterval]
+    stosb
+    mov al, [@@fireTimer]
+    stosb
 
-        mov al, [@@y]
-        stosb
-
-        mov al, [@@direction]
-        stosb
-
-        mov al, [@@animationFrame]
-        stosb
-
-        mov al, [@@animationTimer]
-        stosb
-
-        mov al, [@@spriteIndex]
-        stosb
-
-        mov al, [@@fireInterval]
-        stosb   
-
-        mov al, [@@fireTimer]
-        stosb   
-
-        ret
-
+    ret
 ENDP updateStaticEntityWithValues
 
-; function to update one value of a static entity
-PROC updateStaticEntityWithValue   
+; Function to update one value of a static entity
+PROC updateStaticEntityWithValue
     ARG @@x:BYTE, @@y:BYTE, @@value:BYTE, @@offset:BYTE
     USES eax, ebx, ecx, edx, edi, esi
 
-        movzx eax, [@@x]
-        movzx ebx, [@@y]
-        call calculateEntityGridOffset, eax, ebx , offset grid
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call calculateEntityGridOffset, eax, ebx, offset grid
 
-        mov edi, eax
-        movzx eax, [@@offset]
-        add edi, eax
-        xor eax, eax
+    mov edi, eax
+    movzx eax, [@@offset]
+    add edi, eax
+    xor eax, eax
 
-        mov al, [@@value]
-        stosb
+    mov al, [@@value]
+    stosb
 
-        ret
-
+    ret
 ENDP updateStaticEntityWithValue
 
-; function to get the value of a static entity
+; Function to get the value of a static entity
 PROC getValueOfStaticEntity
     ARG @@x:BYTE, @@y:BYTE, @@offset:BYTE RETURNS eax
     USES ebx, ecx, edx, esi, edi
 
-        ; get the health of the entity
-        ; return the health of the entity in eax
+    ; Get the health of the entity
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call calculateEntityGridOffset, eax, ebx, offset grid
 
-        movzx eax, [@@x]
-        movzx ebx, [@@y]
-        call calculateEntityGridOffset, eax, ebx , offset grid
+    mov edi, eax
+    mov cl, [@@offset]
+    add edi, ecx               ; Skip to the required value
+    mov al, [edi]
 
-        mov edi, eax
-        mov cl, [@@offset]
-        add edi, ecx ; skip to the value needed 
-        mov al, [edi]
-
-        ret
-
+    ret
 ENDP getValueOfStaticEntity
 
-; function to print the health of a static entity
+; Function to print the damage of a static entity
 PROC getDamageOfStaticEntity
     ARG @@x:BYTE, @@y:BYTE RETURNS eax
     USES ebx, ecx
 
-        mov bl, [@@x]
-        mov cl, [@@y]
-        call getValueOfStaticEntity, ebx, ecx, 2 ; 2 is the offset of the damage value
-        ; returns the damage of the entity in eax
+    mov bl, [@@x]
+    mov cl, [@@y]
+    call getValueOfStaticEntity, ebx, ecx, 2 ; Offset 2 for damage
 
-        ret
+    ret
 ENDP getDamageOfStaticEntity
 
-; function to inflic damage to a static entity and return the health in eax
+; Function to inflict damage to a static entity and return the health in eax
 PROC inflictDamageToStaticEntityFromArray
     ARG @@x:BYTE, @@y:BYTE, @@damage:BYTE RETURNS eax
     USES ebx, ecx, edx, edi, esi
 
-        ; get the health of the entity
-        ; subtract the damage from the health
-        ; if the health is less than or equal to 0, remove the entity
+    ; Inflict damage
+    movzx eax, [@@x]
+    movzx ebx, [@@y]
+    call calculateEntityGridOffset, eax, ebx, offset grid
 
-        movzx eax, [@@x]
-        movzx ebx, [@@y]
-        call calculateEntityGridOffset, eax, ebx , offset grid
+    mov edi, eax
+    inc edi                     ; Skip the type
+    mov al, [edi]               ; Load the health value
+    sub al, [@@damage]
+    mov [edi], al               ; Store the updated health
 
-        mov edi, eax
-        inc edi ; skip the type
-        mov al, [edi] ; load the health value
-        sub al, [@@damage]
-        mov [edi], al ; store the updated health value
+    movzx eax, al               ; Return health
 
-        ; returns the health of the entity in eax
-        movzx eax, al
-
-        ret
-
+    ret
 ENDP inflictDamageToStaticEntityFromArray
 
+; Calculate member grid offset
 PROC calculateMemberGridOffset
     ARG @@x:BYTE, @@y:BYTE, @@memberIndex:BYTE RETURNS eax
     USES ebx, ecx, edx
 
     movzx eax, [@@x]
     movzx ebx, [@@y]
-    call calculateEntityGridOffset, eax, ebx, offset grid ;Calculate Entity offset
+    call calculateEntityGridOffset, eax, ebx, offset grid
 
-    movzx ecx, [@@memberIndex] 
-    add eax, ecx            ; add memberindex to entity offset to get member offset
+    movzx ecx, [@@memberIndex]
+    add eax, ecx                ; Add member index to entity offset
 
     ret
 ENDP calculateMemberGridOffset
 
+; Calculate entity grid offset
 PROC calculateEntityGridOffset
     ARG @@x:BYTE, @@y:BYTE, @@grid:DWORD RETURNS eax
     USES ebx, ecx, esi
 
-    mov esi, [@@grid]       ; Load the grid offset into ESI
-    movzx eax, [@@y]        ; Load y coordinate into EAX
-    imul eax, COLUMNS       ; Multiply y by the number of columns
-    movzx ebx, [@@x]        ; Load x coordinate into EBX
-    add eax, ebx            ; Add x to the result
-    imul eax, ENTITY_SIZE   ; Multiply by the size of an entity
-    add eax, esi            ; Add the grid offset
+    mov esi, [@@grid]           ; Load grid address into ESI
+    movzx eax, [@@y]
+    imul eax, COLUMNS
+    movzx ebx, [@@x]
+    add eax, ebx
+    imul eax, ENTITY_SIZE
+    add eax, esi                ; Final offset
 
     ret
 ENDP calculateEntityGridOffset
@@ -1056,9 +1014,7 @@ PROC initializeDynamicEntity
         find_free_position:
             xor eax, eax
             movzx eax, [free_index] ; get the current index and multiply it by the size of the entity structure, 8
-            ;call printDecimal, eax
             call getEntityFromArray, eax
-           ; call printDecimal, eax
             cmp eax, 255
             jne no_free_position
             jmp found_free_position
@@ -1730,9 +1686,6 @@ PROC decrementFireTimer
     call getValueOfStaticEntity, eax, ebx, 11
     dec al
 
-    ; Print the updated fireTimer value for debugging
-    ; call printDecimal, eax
-
     movzx ecx, [@@x]
     movzx ebx, [@@y]
     call updateStaticEntityWithValue, ecx, ebx, eax, 11
@@ -1859,7 +1812,6 @@ PROC handleProjectileMovement
             mov cl, al
             inc cl
             call collisionBetweenDynamicEntities, ecx, ebx, eax, ebx
-            ;call printDecimal, eax
             cmp eax, 0
             je move_projectile_right
             cmp eax, 2
@@ -2262,7 +2214,8 @@ PROC spawnDefaultPlant
         ; call printMouseCoordinates, eax, ebx
 
         call initializeStaticEntity, eax, ebx, 0
-        call updateStaticEntityWithValues, eax, ebx, 100, 3, 1, 0, 0, FIREINTERVAL, FIRETIMER
+        movzx ecx, [default_plant_health]
+        call updateStaticEntityWithValues, eax, ebx, ecx, 3, 1, 0, 0, FIREINTERVAL, FIRETIMER
         
 
         ret
@@ -2279,7 +2232,8 @@ ARG @@x:BYTE, @@y:BYTE
         movzx eax, [@@x]
         movzx ebx, [@@y]
         call initializeStaticEntity, eax, ebx, 1
-        call updateStaticEntityWithValues, eax, ebx, 154, 0, 0, 0, 0, 0, 0 ; a potato does not have damage, means that it can not spawn a projectile
+        movzx ecx, [potato_health]
+        call updateStaticEntityWithValues, eax, ebx, ecx, 0, 0, 0, 0, 0, 0 ; a potato does not have damage, means that it can not spawn a projectile
 
         ret
 ENDP spawnPotato
@@ -2294,7 +2248,8 @@ ARG @@x:BYTE, @@y:BYTE
         movzx eax, [@@x]
         movzx ebx, [@@y]
         call initializeStaticEntity, eax, ebx, 2
-        call updateStaticEntityWithValues, eax, ebx, 254, 0, 0, 0, 0, 0, 0 ; a potato does not have damage, means that it can not spawn a projectile
+        movzx ecx, [bigger_potato_health]
+        call updateStaticEntityWithValues, eax, ebx, ecx, 0, 0, 0, 0, 0, 0 ; a potato does not have damage, means that it can not spawn a projectile
 
         ret
 ENDP spawnBiggerPotato
@@ -2308,7 +2263,8 @@ PROC spawnBiggerPlant
         movzx eax, [@@x]
         movzx ebx, [@@y]
         call initializeStaticEntity, eax, ebx, 3
-        call updateStaticEntityWithValues, eax, ebx, 5, 3, 1, 0, 0, FIREINTERVAL, FIRETIMER
+        movzx ecx, [bigger_plant_health]
+        call updateStaticEntityWithValues, eax, ebx, ecx, 3, 1, 0, 0, FIREINTERVAL, FIRETIMER
 
         ret
 
@@ -2323,7 +2279,8 @@ PROC spawnBiggestPlant
         movzx eax, [@@x]
         movzx ebx, [@@y]
         call initializeStaticEntity, eax, ebx, 4
-        call updateStaticEntityWithValues, eax, ebx, 5, 3, 1, 0, 0, FIREINTERVAL, FIRETIMER
+        movzx ecx, [biggest_plant_health]
+        call updateStaticEntityWithValues, eax, ebx, ecx, 3, 1, 0, 0, FIREINTERVAL, FIRETIMER
 
         ret
 
@@ -2383,7 +2340,6 @@ PROC updateGameState
             jmp after_checking_local
 
         set_spawn_projectile:
-            ; call printDecimal, 99
             mov [@@SpawnProjectile], 1 ; set @@SpawnProjectile to 1
             jmp after_checking_local
 
@@ -3186,7 +3142,10 @@ ENDM waitForKeystroke
 
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
+
 ; AUDIO
+
+; --------------------------------------------------------------------------------------------------------------------------------------
 
 
 PROC reset_dsp
@@ -3506,7 +3465,11 @@ PROC stopMusic
 ENDP stopMusic
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
+
 ; LEVEL processing
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+
 
 ; function to display the level name
 PROC displayLevelName
@@ -3899,15 +3862,12 @@ ENDP handleEntitySpawning
 
 PROC spawnStartingEntities
 
-    call spawnDefaultZombie, 8, 0
-    call spawnDefaultZombie, 7, 0
-    call spawnDefaultZombie, 6, 0
-    ; call spawnDefaultZombie, 8, 1
-    ; call spawnDefaultZombie, 8, 2
-    ; call spawnDefaultZombie, 8, 3
-    ; call spawnDefaultZombie, 8, 4
+    call spawnDefaultZombie, 8, 1
+    call spawnDefaultZombie, 8, 2
+    call spawnDefaultZombie, 8, 3
+    call spawnDefaultZombie, 8, 4
 
-    ; call spawnDefaultPlant, 0, 0
+    call spawnDefaultPlant, 0, 0
     call spawnDefaultPlant, 0, 1
     call spawnDefaultPlant, 0, 2
     call spawnPotato, 5, 3
@@ -3987,19 +3947,17 @@ PROC ShopSolver
     ; Set selected_shop to sub_type of the selected region
     mov al, [esi + REGION.sub_type]
     mov [selected_shop], al
-    movzx eax, al 
-    call printDecimalWithoutNewLine, eax
     ret
     
 ENDP ShopSolver
 
 PROC MenuSolver
     mov al, [esi + REGION.sub_type]
-    call printDecimalWithoutNewLine, eax
     cmp al, 9
     jne no_menu_action
     call stopMusic
     call restartGame
+
     no_menu_action:
     ret
 ENDP MenuSolver 
@@ -4034,7 +3992,6 @@ SpawnPlant:
     movzx ebx, [@@coordY]    ; Load coordY into EBX
     call printMouseCoordinates, eax, ebx
     call spawnDefaultPlant, eax, ebx
-    ; call ShopReset
 
     jmp SpawnSolver_end
 
@@ -4043,9 +4000,7 @@ SpawnZombie:
     movzx eax, [@@coordX]    ; Load coordX into EAX
     movzx ebx, [@@coordY]    ; Load coordY into EBX
     call printMouseCoordinates, eax, ebx
-
     call spawnDefaultZombie, eax, ebx
-    ; call ShopReset
 
     jmp SpawnSolver_end
 
@@ -4188,9 +4143,6 @@ draw_biggest_plant_button:
     movzx eax, [esi + REGION.x_min] 
     call drawSprite, offset button3, VMEMADR, eax, ebx
 
-    ; call drawEntity, eax, ebx, ebp
-    ; jmp after_entity_draw
-
 after_entity_draw:
     
  ; Check if this is the selected button
@@ -4219,9 +4171,6 @@ ENDP drawShopInterface
 PROC displayCoins
     USES eax, ebx, ecx, edx
 
-    ; call setCursorPosition, 19, 0
-    ; mov edx, offset msg_coins
-    ; call printString, edx
     mov eax, [player_coins]
     call setCursorPosition, 20, 2
     call printDecimal, eax
@@ -4230,9 +4179,8 @@ PROC displayCoins
     ret
 ENDP displayCoins
 
-; getCost
-; Berekent de kost van een entiteit op basis van type (in AL)
-; Returns EAX = cost
+; Calculates the cost of an entity based on type (in AL)
+
 PROC getCost
     ARG @@type:BYTE RETURNS eax
     USES ebx, ecx, edx
@@ -4240,10 +4188,10 @@ PROC getCost
     movzx eax, [@@type]
     call getMainType, eax
     cmp al, 0
-    jne no_cost ; enkel mainType=0 (planten) hebben een kost
+    jne no_cost ; only mainType=0 (plants) have a cost
 
     ; mainType=0 => plant
-    ; nu subType opvragen
+    ; now retrieve subType
     movzx eax, [@@type]
     call getSubType, eax
 
@@ -4306,7 +4254,6 @@ PROC showGameOverScreen
     call printString, edx
 
 GameOverInputLoop:
-
     ; Check ESC key
     call checkForSpecificKeystroke, 001Bh ; ESC
 
@@ -4325,7 +4272,6 @@ GameOverInputLoop:
     ret
 
 not_R_key:
-    
     ;Neglect other keys
     jmp GameOverInputLoop
 
@@ -4340,61 +4286,64 @@ ENDP showGameOverScreen
 PROC restartGame
     USES eax, ebx, ecx, edx, esi, edi
     
-    ;Reset variables
+    ; Reset game-related variables
     mov [free_index], 0
     mov [current_level_index], 0
     mov [current_level], offset level1_instance
     mov [current_wave], 0
     mov [current_entity], 0
     mov [spawn_counter], 0
-    mov [player_coins], 300
-    mov [player_hearts], 3
-    mov [elapsed_time], 0
-
-
-    ;Reset grid, dynamic_grid and dynamic_entities_array
+    mov [player_coins], 300      ; Initialize player coins to 300
+    mov [player_hearts], 3       ; Initialize player hearts to 3
+    mov [elapsed_time], 0         ; Reset elapsed time
+    
+    ; Clear the grid by setting all cells to -1
     mov edi, offset grid
     mov eax, ENTITY_SIZE
     imul eax, COLUMNS
     imul eax, ROWS
     mov ecx, eax
     mov al, -1
-    rep stosb
-
+    rep stosb                      ; Fill grid with -1
+    
+    ; Clear the dynamic grid
     mov edi, offset dynamic_grid
     mov eax, COLUMNS
     imul eax, ROWS
     mov ecx, eax
     xor eax, eax
     mov al, -1
-    rep stosb
-
+    rep stosb                      ; Fill dynamic_grid with -1
+    
+    ; Clear the dynamic entities array
     mov edi, offset dynamic_entities_array
     mov eax, ENTITY_SIZE
     imul eax, MAX_ENTITIES
     mov ecx, eax
     xor eax, eax
     mov al, -1
-    rep stosb
-
+    rep stosb                      ; Fill dynamic_entities_array with -1
     
+    ; Restart game music and timer
     call startMusic
     call startTime
+    
+    ; Spawn the initial set of entities
     call spawnStartingEntities
     
     ret
 ENDP restartGame
 
-; Draws a red heart
+; Draws a red heart at the specified (x0, y0) coordinates
 PROC drawHeart
     ARG @@x0:WORD, @@y0:WORD
     USES eax, ebx, ecx, edx, edi, esi
 
     movzx eax, [@@x0]
     movzx ebx, [@@y0]
-    mov ecx, 12 ; rood
+    mov ecx, 12 ; Color code for red
 
-    ; Row0: consist of two rectangles (x+2,y), w=2 and (x+6,y), w=2
+    ; Row0: Two small rectangles to form the top of the heart
     movzx eax, [@@x0]
     add eax, 2
     movzx edx, [@@y0]
@@ -4405,53 +4354,51 @@ PROC drawHeart
     movzx edx, [@@y0]
     call drawColoredRectangle, eax, edx, 2, 1, ecx
 
-    ; Row1: (x+1, y+1), w=8
+    ; Row1: Middle wider rectangle
     movzx eax, [@@x0]
     add eax, 1
     movzx ebx, [@@y0]
     add ebx, 1
     call drawColoredRectangle, eax, ebx, 8, 1, ecx
 
-    ; Row2: (x+0, y+2), w=10
+    ; Rows2-4: Extending the heart shape downwards
     movzx eax, [@@x0]
     movzx ebx, [@@y0]
     add ebx, 2
     call drawColoredRectangle, eax, ebx, 10, 1, ecx
 
-    ; Row3: (x+0, y+3), w=10
     movzx eax, [@@x0]
     movzx ebx, [@@y0]
     add ebx, 3
     call drawColoredRectangle, eax, ebx, 10, 1, ecx
 
-    ; Row4: (x+0, y+4), w=10
     movzx eax, [@@x0]
     movzx ebx, [@@y0]
     add ebx, 4
     call drawColoredRectangle, eax, ebx, 10, 1, ecx
 
-    ; Row5: (x+1, y+5), w=8
+    ; Row5: Narrowing the heart again
     movzx eax, [@@x0]
     add eax, 1
     movzx ebx, [@@y0]
     add ebx, 5
     call drawColoredRectangle, eax, ebx, 8, 1, ecx
 
-    ; Row6: (x+2, y+6), w=6
+    ; Row6: Further narrowing
     movzx eax, [@@x0]
     add eax, 2
     movzx ebx, [@@y0]
     add ebx, 6
     call drawColoredRectangle, eax, ebx, 6, 1, ecx
 
-    ; Row7: (x+3, y+7), w=4
+    ; Row7: Almost at the bottom of the heart
     movzx eax, [@@x0]
     add eax, 3
     movzx ebx, [@@y0]
     add ebx, 7
     call drawColoredRectangle, eax, ebx, 4, 1, ecx
 
-    ; Row8: (x+4, y+8), w=2
+    ; Row8: Bottom of the heart
     movzx eax, [@@x0]
     add eax, 4
     movzx ebx, [@@y0]
@@ -4460,6 +4407,8 @@ PROC drawHeart
 
     ret
 ENDP drawHeart
+
+; Displays the player's hearts on the screen
 PROC displayHearts
     USES eax, ebx, ecx, edx, esi, edi
 
@@ -4467,90 +4416,87 @@ PROC displayHearts
     cmp eax, 0
     je no_hearts
 
-    mov ebx, 6   ; start x
-    mov edx, 30  ; start y
+    mov ebx, 6   ; Starting x-coordinate for the first heart
+    mov edx, 30  ; y-coordinate for hearts
 
-    mov ecx, eax
+    mov ecx, eax ; Number of hearts to display
 draw_heart_loop:
     push ecx
     mov eax, ebx
     call drawHeart, eax, edx
     pop ecx
-    add ebx, 14
+    add ebx, 14  ; Spacing between hearts
     loop draw_heart_loop
 
 no_hearts:
     ret
 ENDP displayHearts
 
-;Draw a yello (14) coin
+; Draws a yellow coin at the specified (x0, y0) coordinates
 PROC drawCoin
     ARG @@x0:WORD, @@y0:WORD
     USES eax, ebx, ecx, edx, edi, esi
 
-    mov ecx, 14 ; yellow
+    mov ecx, 14 ; Color code for yellow
 
-    ; Row0: (x+3, y+0), w=4
+    ; Row0: Top of the coin
     movzx eax, [@@x0]
     add eax, 3
     movzx edx, [@@y0]
     call drawColoredRectangle, eax, edx, 4, 1, ecx
 
-    ; Row1: (x+2, y+1), w=6
+    ; Row1: Expanding width
     movzx eax, [@@x0]
     add eax, 2
     movzx ebx, [@@y0]
     add ebx, 1
     call drawColoredRectangle, eax, ebx, 6, 1, ecx
 
-    ; Row2: (x+1, y+2), w=8
+    ; Rows2-3: Middle of the coin
     movzx eax, [@@x0]
     add eax, 1
     movzx ebx, [@@y0]
     add ebx, 2
     call drawColoredRectangle, eax, ebx, 8, 1, ecx
 
-    ; Row3: (x+1, y+3), w=8
     movzx eax, [@@x0]
     add eax, 1
     movzx ebx, [@@y0]
     add ebx, 3
     call drawColoredRectangle, eax, ebx, 8, 1, ecx
 
-    ; Row4: (x+0, y+4), w=10
+    ; Rows4-5: Maintaining coin width
     movzx eax, [@@x0]
     movzx ebx, [@@y0]
     add ebx, 4
     call drawColoredRectangle, eax, ebx, 10, 1, ecx
 
-    ; Row5: (x+0, y+5), w=10
     movzx eax, [@@x0]
     movzx ebx, [@@y0]
     add ebx, 5
     call drawColoredRectangle, eax, ebx, 10, 1, ecx
 
-    ; Row6: (x+1, y+6), w=8
+    ; Rows6-7: Narrowing the coin towards the bottom
     movzx eax, [@@x0]
     add eax, 1
     movzx ebx, [@@y0]
     add ebx, 6
     call drawColoredRectangle, eax, ebx, 8, 1, ecx
 
-    ; Row7: (x+1, y+7), w=8
     movzx eax, [@@x0]
     add eax, 1
     movzx ebx, [@@y0]
     add ebx, 7
     call drawColoredRectangle, eax, ebx, 8, 1, ecx
 
-    ; Row8: (x+2, y+8), w=6
+    ; Row8: Bottom narrowing
     movzx eax, [@@x0]
     add eax, 2
     movzx ebx, [@@y0]
     add ebx, 8
     call drawColoredRectangle, eax, ebx, 6, 1, ecx
 
-    ; Row9: (x+3, y+9), w=4
+    ; Row9: Base of the coin
     movzx eax, [@@x0]
     add eax, 3
     movzx ebx, [@@y0]
@@ -4559,8 +4505,12 @@ PROC drawCoin
 
     ret
 ENDP drawCoin
+
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
+; Main game loop
+
+; --------------------------------------------------------------------------------------------------------------------------------------
 PROC main
     sti                 ; Enable interrupts
     cld                 ; Clear direction flag
@@ -4576,8 +4526,6 @@ PROC main
     mov     edx, offset msg_no_mouse
     int     21h
 
-
-
 @@mouse_present:
     ; Set video mode to 13h and install mouse handler
     call    setVideoMode, 13h
@@ -4585,45 +4533,41 @@ PROC main
     call    mouse_install, offset mouseHandler
     call    rand_init
 
-    lea eax, [sprite1+8];get memory location of first image data element in the sprite variable
-	call ReadFile, offset sprite_file1, eax,DATASIZE ;Fill image data from file data
-    lea eax, [sprite2+8];get memory location of first image data element in the sprite variable
-    call ReadFile, offset sprite_file2, eax,DATASIZE ;Fill image data from file data
-    lea eax,[sprite3+8]
-    call ReadFile, offset sprite_file3, eax,DATASIZE
-    lea eax,[sprite4+8]
-    call ReadFile, offset sprite_file4, eax,DATASIZE
-    lea eax,[sprite5+8]
-    call ReadFile, offset sprite_file5, eax,DATASIZE
-    lea eax,[sprite6+8]
-    call ReadFile, offset sprite_file6, eax,DATASIZE
-    lea eax,[sprite7+8]
-    call ReadFile, offset sprite_file7, eax,DATASIZE
-    lea eax,[sprite8+8]
-    call ReadFile, offset sprite_file8, eax,DATASIZE
-    lea eax,[sprite9+8]
-    call ReadFile, offset sprite_file9, eax,DATASIZE
+    ; Load sprite files into memory
+    lea eax, [sprite1+8] ; get memory location of first image data element in the sprite variable
+    call ReadFile, offset sprite_file1, eax, DATASIZE ; Fill image data from file data
+    lea eax, [sprite2+8]
+    call ReadFile, offset sprite_file2, eax, DATASIZE
+    lea eax, [sprite3+8]
+    call ReadFile, offset sprite_file3, eax, DATASIZE
+    lea eax, [sprite4+8]
+    call ReadFile, offset sprite_file4, eax, DATASIZE
+    lea eax, [sprite5+8]
+    call ReadFile, offset sprite_file5, eax, DATASIZE
+    lea eax, [sprite6+8]
+    call ReadFile, offset sprite_file6, eax, DATASIZE
+    lea eax, [sprite7+8]
+    call ReadFile, offset sprite_file7, eax, DATASIZE
+    lea eax, [sprite8+8]
+    call ReadFile, offset sprite_file8, eax, DATASIZE
+    lea eax, [sprite9+8]
+    call ReadFile, offset sprite_file9, eax, DATASIZE
 
+    ; Load button files into memory
     lea eax, [button1+8]
     call ReadFile, offset button_file1, eax, DATASIZE
-
     lea eax, [button2+8]
     call ReadFile, offset button_file2, eax, DATASIZE
-
     lea eax, [button3+8]
     call ReadFile, offset button_file3, eax, DATASIZE
-
     lea eax, [button4+8]
     call ReadFile, offset button_file4, eax, DATASIZE
-
     lea eax, [button5+8]
     call ReadFile, offset button_file5, eax, DATASIZE
-
     lea eax, [button6+8]
     call ReadFile, offset button_file6, eax, DATASIZE
     
     ; Initialize regions arguments: @@regionIndex:BYTE, @@x_min:WORD, @@x_max:WORD, @@y_min:WORD, @@y_max:WORD, @@region_type:BYTE, @@sub_type:BYTE
-
     call initializeRegion, 0, 0, 24, 50, 82, 1, 00
     call initializeRegion, 1, 0, 24, 83, 115, 1, 03
     call initializeRegion, 2, 0, 24, 116, 148, 1, 04
@@ -4632,7 +4576,7 @@ PROC main
     call initializeRegion, 5, 25, 49, 116, 148, 1, 10
     call initializeRegion, 6, 5, 47, 172, 186, 0, 9
 
-    
+    ; Spawn initial entities
     call spawnStartingEntities
     call startTime
 
@@ -4647,72 +4591,103 @@ PROC main
     ; Render the frame
     call renderFrame
 
+    ; Handle entity spawning
     call handleEntitySpawning
 
+    ; Check and reset timer if necessary
     call checkAndResetTimer
 
-    ;call incrementSpawnCounter
-
     ; Check for ESC key to exit
-    call    checkForSpecificKeystroke, 001Bh
-    jmp     @@gameLoop
+    call checkForSpecificKeystroke, 001Bh
+    jmp @@gameLoop
 ENDP main
 
 ; -------------------------------------------------------------------
+
+;Data & variables
+
+; -------------------------------------------------------------------
 DATASEG
-    
+
+    ; Entity structure definition
     STRUC ENTITY
-        type    db -1
-        health  db ?
-        damage  db ?
-        speed   db ?
-        x db ?
-        y db ?
-        direction db ?
-        animationFrame db ?
-        animationTimer db ?
-        spriteIndex db ?
-        fireInterval db ?  
-        fireTimer db ?
+        type            db -1    ; Type of entity (-1 indicates empty)
+        health          db ?     ; Health of the entity
+        damage          db ?     ; Damage dealt by the entity
+        speed           db ?     ; Speed of the entity
+        x               db ?     ; X position of the entity
+        y               db ?     ; Y position of the entity
+        direction       db ?     ; Direction of the entity
+        animationFrame  db ?     ; Current animation frame
+        animationTimer  db ?     ; Animation timer
+        spriteIndex     db ?     ; Index of the sprite
+        fireInterval    db ?     ; Interval between firing projectiles
+        fireTimer       db ?     ; Timer for firing projectiles
     ENDS ENTITY
 
+    ; Region structure definition
     STRUC REGION
-        x_min   DW ?
-        x_max   DW ?
-        y_min   DW ?
-        y_max   DW ?
-        region_type    DB ?
-        sub_type DB ?
+        x_min       DW ?    ; Minimum X coordinate of the region
+        x_max       DW ?    ; Maximum X coordinate of the region
+        y_min       DW ?    ; Minimum Y coordinate of the region
+        y_max       DW ?    ; Maximum Y coordinate of the region
+        region_type DB ?    ; Type of the region (e.g., shop, menu)
+        sub_type    DB ?    ; Sub-type of the region (e.g., specific button)
     ENDS REGION
 
-	palette		db 768 dup (?) ; 256 colors * 3 bytes per color
-    grid        ENTITY 50 dup (<>)  ; 5 rows * 20 columns
-    
+    ; Palette for 256 colors (3 bytes per color)
+    palette db 768 dup (?)
 
-    dynamic_grid db 50 dup (-1) ; 5 rows * 20 columns
-    dynamic_entities_array ENTITY 100 dup (<>) ; make space for 100 entities
-    free_index db 0 ; index of the first free entity in the dynamic_entities_array
-    mob_capacity db 100 ; maximum number of entities in the dynamic_entities_array
-    mob_counter db 0 ; number of entities in the dynamic_entities_array
-    regions     REGION 20 dup (<>) ;make space for max 20 regions
+    ; Grid for static entities (5 rows * 10 columns)
+    grid ENTITY 50 dup (<>)
+
+    ; Dynamic grid for entities (5 rows * 10 columns)
+    dynamic_grid db 50 dup (-1)
+
+    ; Array for dynamic entities (space for 100 entities)
+    dynamic_entities_array ENTITY 100 dup (<>)
+
+    ; Index of the first free entity in the dynamic_entities_array
+    free_index db 0
+
+    ; Maximum number of entities in the dynamic_entities_array
+    mob_capacity db 100
+
+    ; Number of entities in the dynamic_entities_array
+    mob_counter db 0
+
+    ; Array for regions (space for max 20 regions)
+    regions REGION 20 dup (<>)
+
+    ; Buffer for BMP header and image data
     buffer db BMP_HEADER_SIZE + 320 * 200 dup (0)
 
+    ; Messages for various purposes
     msg_unknown db "Unknown entity type", 10, 13, "$"
     msg_type db "free index is", 10, 13, "$"
-
-    msg_no_mouse    db 'No mouse found!', 0dh, 0ah, '$'
-    msg_test    db 'Test $'
-
+    msg_no_mouse db 'No mouse found!', 0dh, 0ah, '$'
+    msg_test db 'Test $'
     msg_wave_interval db "/", '$'
 
+    ; Timer variables
     start_time dd 0
     elapsed_time dd 0
 
+    ; Custom mouse handler pointer
     custom_mouse_handler dd ?
-    
-    mouseX  dd 0
-    mouseY  dd 0
 
+    ; Mouse coordinates
+    mouseX dd 0
+    mouseY dd 0
+
+    ; Entities health & damage constants
+    default_plant_health db 50
+    potato_health db 154
+    bigger_potato_health db 254
+    bigger_plant_health db 200
+    biggest_plant_health db 200
+
+    ; Shop-related variables
     selected_shop db -1
     cost_default_plant db 50
     cost_potato db 25
@@ -4720,17 +4695,18 @@ DATASEG
     cost_bigger_plant db 100
     cost_biggest_plant db 150
     dead_zombie_reward dd 20
-    
-    player_coins dd 300   ; Start with 200 
+
+    ; Player-related variables
+    player_coins dd 300   ; Start with 300 coins
     msg_coins db "Coins:", '$'
     msg_no_coins db "Broke times", 13, 10, "$"
-
-    player_hearts dd 2
+    player_hearts dd 3
     msg_gameover db "GAME OVER", "$"
     msg_game_over db "GAME OVER", 13,10,'$',0
     msg_restart_instructions_restart db "Press 'R'   to restart",13,10,'$',0
     msg_restart_instructions_exit db "      'ESC' to exit",13,10,'$',0
 
+    ; Menu-related messages
     msg_menu_restart db "Restart", "$"
     msg_menu_exit db "Exit", "$"
     msg_game_reset db "RESET", 0Dh, 0Ah, "$"
@@ -4739,6 +4715,7 @@ DATASEG
     msg_pause_setlevel db "Set Level", "$"
     msg_pause_return db "Return to Game", "$"
 
+    ; Region structure offsets
     REGION_x_min       EQU 0
     REGION_x_max       EQU 2
     REGION_y_min       EQU 4
@@ -4746,17 +4723,6 @@ DATASEG
     REGION_region_type EQU 8
     REGION_sub_type    EQU 9
     REGION_SIZE        EQU 10  ; Total size of REGION struct
-    ; Template entity structure
-    ; Structure of an entity:
-    ; - 1 byte: type of entity (0 for plant, 1 for zombie, 2 for projectile, 3 for sun, 4 for lawn mower)
-    ; - 1 byte: health (how much health the entity has)
-    ; - 1 byte: damage (how much damage the entity deals if it's a projectile or a zombie, else 0 for potato, 1 for sunflower ...)
-    ; - 1 byte: speed (determines entity's movement speed if direction is not 0, else it's the speed of the projectile)
-    ; - 1 byte: animation frame (if applicable)
-    ; - 1 byte: animation timer (if applicable)
-    ; - 1 byte: sprite index (if applicable)
-    ; - 1 byte: render hierarchy (0 for background, 1 for entities, 2 for projectiles, 3 for UI)
-
 
     ; -------------------------------------------------------------------
     ; LEVELS
