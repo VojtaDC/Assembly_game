@@ -546,8 +546,11 @@ PROC setCursorPosition
 
     ret
 ENDP setCursorPosition
+
 ; ----------------------------------------------------------------------
+
 ; Functions for the grid
+
 ; ----------------------------------------------------------------------
 
 ; Print grid to screen in text mode
@@ -909,9 +912,6 @@ ENDP calculateEntityGridOffset
 ; functions for dynamic entities
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
-
-; Do memory management for dynamic entities
-; TODO: count the amount of initialized entities and check if there is still space for a new entity to prevent overflow
 
 ; function to get type of an entity
 PROC getEntityType
@@ -1841,7 +1841,7 @@ PROC handleProjectileMovement
             mov ecx, eax
             movzx eax, [@@x]
             inc eax
-            call inflictDamageToDynamicEntityFromGrid, eax, ebx, ecx ; TODO: damage should be a variable
+            call inflictDamageToDynamicEntityFromGrid, eax, ebx, ecx
             
 
         remove_projectile_movement:
@@ -1908,7 +1908,7 @@ PROC handleZombieMovement
             mov ecx, eax
             movzx eax, [@@x]
             dec eax
-            call inflictDamageToStaticEntityFromGrid, eax, ebx, ecx ; TODO: damage should be a variable
+            call inflictDamageToStaticEntityFromGrid, eax, ebx, ecx
             mov eax, 0
             ret
 
@@ -2450,7 +2450,6 @@ PROC drawStaticEntitiesOnGrid
 
     ; Iterate over the grid, for each cell, check if there is a plant
     ; If there is a plant, draw the plant, read the type of the plant from the grid
-    ; TODO make code better, too much repetition
 
     mov esi, [@@grid]               ; Set ESI to point to the grid array
     mov ecx, ROWS
@@ -2531,7 +2530,7 @@ PROC drawEntity
         ; check the type of the entity
         ; draw the entity based on the type
 
-        movzx eax, [@@type] ; TODO make switch case
+        movzx eax, [@@type]
         movzx ebx, [@@x0]
         movzx ecx, [@@y0]
         cmp al, 0
@@ -2816,8 +2815,12 @@ PROC renderFrame
 
 ENDP renderFrame
 
-; ----------------------------------------------------------------------
+; --------------------------------------------------------------------------------------------------------------------------------------
+
 ; MOUSE
+
+; --------------------------------------------------------------------------------------------------------------------------------------
+
 
 PROC mouse_uninstall
     USES    eax, ecx, edx
@@ -3057,8 +3060,10 @@ PROC setMouseLimits
 ENDP setMouseLimits
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
+
 ; SPRITE DRAWING
 
+; --------------------------------------------------------------------------------------------------------------------------------------
 
 PROC ReadFile
 	ARG	 @@filepathptr: dword,@@dataptr: dword,@@noofbytes: dword 
@@ -3833,7 +3838,6 @@ PROC handleEntitySpawning
         add edx, ecx
         mov eax, [edx]              ; Get the entity type
 
-        ;call spawnEntityType, 9, 0, eax ; TODO change the type of the entity, based on what is in the array
         call findFreeSpotLastColumn, eax
         cmp al, 1
         je not_spawn ; if the entity could not be spawned, do not increment the entity counter
@@ -3876,11 +3880,13 @@ PROC spawnStartingEntities
     call spawnBiggestPlant, 0, 4
     ret
 ENDP spawnStartingEntities
+
 ; --------------------------------------------------------------------------------------------------------------------------------------
 
 ; Interface functions
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
+
 ; Calls the correct solver (shop/menu/...) based on region coordinates
 PROC RegionSolver
     ARG @@mouseX:WORD, @@mouseY:WORD
@@ -4511,6 +4517,7 @@ ENDP drawCoin
 ; Main game loop
 
 ; --------------------------------------------------------------------------------------------------------------------------------------
+
 PROC main
     sti                 ; Enable interrupts
     cld                 ; Clear direction flag
@@ -4602,11 +4609,12 @@ PROC main
     jmp @@gameLoop
 ENDP main
 
-; -------------------------------------------------------------------
+; --------------------------------------------------------------------------------------------------------------------------------------
 
 ;Data & variables
 
-; -------------------------------------------------------------------
+; --------------------------------------------------------------------------------------------------------------------------------------
+
 DATASEG
 
     ; Entity structure definition
@@ -4724,8 +4732,12 @@ DATASEG
     REGION_sub_type    EQU 9
     REGION_SIZE        EQU 10  ; Total size of REGION struct
 
-    ; -------------------------------------------------------------------
+    ; --------------------------------------------------------------------------------------------------------------------------------------
+
     ; LEVELS
+
+    ; --------------------------------------------------------------------------------------------------------------------------------------
+
 
     STRUC LEVEL
         level_name dd ?      ; Pointer to the level name
@@ -4818,6 +4830,7 @@ DATASEG
     sprite_file3 db "sprites/SPRITEDC.bin", 0 ; default zombie
     sprite_file4 db "sprites/SPRITEDD.bin", 0 ; strong zombie
     sprite_file5 db "sprites/SPRITEDF.bin", 0 ; leap zombie
+
     ; BUTTONS
     ; Button Files
     button_file1 db "sprites/defplant.bin", 0     ; Bigger Plant Button
@@ -4883,10 +4896,7 @@ DATASEG
 	musicPlaying db 0
 	readbusy dw 0	; if busy reading something else
 	readfail dw 0 	; signal if interrupt was called during busy time
-    
-; -------------------------------------------------------------------
-; STACK
-; -------------------------------------------------------------------
+
 STACK 2000h
 
 END main
